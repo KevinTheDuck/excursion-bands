@@ -8,10 +8,21 @@ dependencies = [
     "databento>=0.77.0",
     "fastapi>=0.136.1",
     "fredapi>=0.5.2",
+    "ipykernel>=7.2.0",
     "matplotlib>=3.10.9",
-    "mlflow>=1.27.0",
     "pandas>=3.0.2",
     "polars>=1.40.1",
     "pyyaml>=6.0.3",
     "xgboost>=3.2.0",
 ]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["excursion_bands*"]

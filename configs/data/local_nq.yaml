@@ -1,0 +1,7 @@
+raw:
+  main: data/raw/nq_1m.parquet
+
+processed:
+  main: data/processed/nq_30m.parquet
+
+timezone: America/New_York
