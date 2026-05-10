@@ -1,7 +1,7 @@
 [project]
 name = "excursion-bands"
 version = "0.1.0"
-description = "Add your description here"
+description = "Excursion bands models"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
