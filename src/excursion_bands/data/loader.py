@@ -7,7 +7,7 @@ import yaml
 from excursion_bands.utils import logger
 
 """
-[Data/loader.py]
+[data/loader.py]
 A general purpose data loaders, file_path are usually expected to be a direct path to a file not a directory
 """
 
