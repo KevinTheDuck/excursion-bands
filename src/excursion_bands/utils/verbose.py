@@ -5,4 +5,4 @@ Used for prints methods; pretty straight forward
 
 
 def logger(tag: str, body: str) -> str:
-    return f"{tag: <30} {body}"
+    return f"{tag: <45} {body}"
