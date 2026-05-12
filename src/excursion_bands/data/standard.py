@@ -1,5 +1,6 @@
 from datetime import time
 
+import exchange_calendars as xcals
 import polars as pl
 
 from excursion_bands.utils import logger
@@ -84,4 +85,19 @@ def intraday_session_tagging(
 
     df = df.with_columns(expr.otherwise(pl.lit("Closed")).alias("Intraday_Session"))
 
-    return df
+    return df.filter(pl.col("Intraday_Session") != "Closed")
+
+
+def filter_valid_sessions(
+    df: pl.DataFrame, calendar_name: str = "XNYS"
+) -> pl.DataFrame:
+    _tag_str = "[data/standard/filter_valid_sessions]"
+    print(logger(_tag_str, "Removing non trading days"))
+
+    cal = xcals.get_calendar(calendar_name)
+
+    sessions = df["Session"].unique().to_list()
+
+    valid_sessions = {s for s in sessions if cal.is_session(s)}
+
+    return df.filter(pl.col("Session").is_in(list(valid_sessions)))

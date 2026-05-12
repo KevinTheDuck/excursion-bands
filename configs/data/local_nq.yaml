@@ -2,7 +2,10 @@ raw:
   main: data/raw/nq_1m.parquet
 
 processed:
+  timeframe: 30m
   main: data/processed/nq_30m.parquet
+  aggregated: data/processed/aggregated.parquet
+  excursion_bands: data/processed/excursion_bands.parquet
 
 session:
   target_1:
