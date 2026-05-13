@@ -49,7 +49,7 @@ def aggregate_1m_data(df: pl.DataFrame, timeframe: str = "30m") -> pl.DataFrame:
 
 
 def load_processed_data(
-    config_file: dict, raw_data: pl.DataFrame | None = None
+    config_file: dict, raw_data: pl.DataFrame | None
 ) -> pl.DataFrame:
     _tag_str = "[load_processed_data]"
     file_path = config_file["processed"]["main"]
@@ -67,6 +67,10 @@ def load_processed_data(
                 f"{desired_timeframe} data doesn't exists creating a new one...",
             )
         )
+
+        if raw_data is None:
+            raise ValueError(logger(_tag_str, "raw_data is needed when data doesn't exists"))
+
         df = aggregate_1m_data(raw_data, desired_timeframe)
         write_parquet(df, data_path)
         return df
