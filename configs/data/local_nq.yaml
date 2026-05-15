@@ -7,20 +7,6 @@ processed:
   aggregated: data/processed/aggregated.parquet
   excursion_bands: data/processed/excursion_bands.parquet
 
-session:
-  target_1:
-    start: "08:30"
-    end: "12:00"
-  target_2:
-    start: "13:00"
-    end: "17:00"
-  pre_target_2:
-    start: "03:00"
-    end: "08:30"
-  pre_target_1:
-    start: "18:00"
-    end: "03:00"
-
 timezone:
   datetime_col: DateTime
   broker: UTC

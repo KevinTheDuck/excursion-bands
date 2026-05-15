@@ -15,7 +15,7 @@ from excursion_bands.paths import CONFIGS, resolve_path
 from excursion_bands.utils import logger
 
 cfg = load_yaml(CONFIGS / "data/local_nq.yaml")
-
+sessions = load_yaml(CONFIGS / "sessions/nq_default.yaml")
 
 def load_raw_data(config_file: dict) -> pl.DataFrame:
     _tag_str = "[load_raw_data]"
@@ -83,21 +83,21 @@ raw_30m = load_processed_data(cfg, raw_1m)
 print(raw_30m.shape)
 
 
-def process_raw_data(config_file: dict, raw_data: pl.DataFrame) -> pl.DataFrame:
+def process_raw_data(data_config_file: dict, session_config_file: dict, raw_data: pl.DataFrame) -> pl.DataFrame:
     _tag_str = "[process_raw_data]"
     print(logger(_tag_str, "Processing raw data..."))
 
-    datetime_col = config_file["timezone"]["datetime_col"]
-    session_cfg = config_file["session"]
+    datetime_col = data_config_file["timezone"]["datetime_col"]
+    session_cfg = session_config_file["session"]
 
     df = convert_to_timezone(
         raw_data,
         datetime_col,
-        config_file["timezone"]["broker"],
-        config_file["timezone"]["target"],
+        data_config_file["timezone"]["broker"],
+        data_config_file["timezone"]["target"],
     )
 
-    df = session_tagging(df, datetime_col, config_file["timezone"]["eod_close"])
+    df = session_tagging(df, datetime_col, data_config_file["timezone"]["eod_close"])
     df = intraday_session_tagging(df, datetime_col, session_cfg)
     df = remove_incomplete_days(df)
 
@@ -117,8 +117,8 @@ def process_raw_data(config_file: dict, raw_data: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-df_30m = process_raw_data(cfg, raw_30m)
-df_1m = process_raw_data(cfg, raw_1m)
+df_30m = process_raw_data(cfg, sessions, raw_30m)
+df_1m = process_raw_data(cfg, sessions, raw_1m)
 
 print(df_30m.head(3))
 print(df_1m.tail(3))

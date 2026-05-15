@@ -65,14 +65,18 @@ def aggregate_1m_data(df: pl.DataFrame, timeframe: str = "30m") -> pl.DataFrame:
         )
     )
 
-def process_raw_data(config_file: dict, raw_data: pl.DataFrame) -> pl.DataFrame:
+def process_raw_data(
+    data_config_file: dict,
+    session_config_file: dict,
+    raw_data: pl.DataFrame
+) -> pl.DataFrame:
     """
-    Process raw market data into a cleaned session-aware dataset.
+    Process raw market data into a cleaned, session-aware dataset.
 
     Parameters
     ----------
-    config_file : dict
-        Configuration dictionary containing timezone and session settings.
+    data_config_file : dict
+        Configuration dictionary containing data and timezone settings.
 
         Required sections:
         - timezone
@@ -81,13 +85,23 @@ def process_raw_data(config_file: dict, raw_data: pl.DataFrame) -> pl.DataFrame:
             - target
             - eod_close
 
-        - session
-            Intraday session intervals used for session tagging.
+    session_config_file : dict
+        Configuration dictionary containing intraday session definitions.
+
+        Required structure:
+        {
+            "session": {
+                "<session_name>": {
+                    "start": "HH:MM",
+                    "end": "HH:MM"
+                }
+            }
+        }
 
     raw_data : pl.DataFrame
-        Raw market OHLCV dataset.
+        Raw OHLCV market dataset.
 
-        Expected columns include:
+        Expected columns:
         - DateTime
         - Open
         - High
@@ -110,7 +124,7 @@ def process_raw_data(config_file: dict, raw_data: pl.DataFrame) -> pl.DataFrame:
 
     Notes
     -----
-    Processing pipeline includes:
+    Processing pipeline performs:
 
     1. Convert broker timestamps to target timezone
     2. Assign daily session labels
@@ -118,21 +132,31 @@ def process_raw_data(config_file: dict, raw_data: pl.DataFrame) -> pl.DataFrame:
     4. Remove incomplete trading days
     5. Return only required output columns
     """
-    _tag_str = "[pipeline/processing/process_raw_data]"
+    _tag_str = "[process_raw_data]"
     print(logger(_tag_str, "Processing raw data..."))
 
-    datetime_col = config_file["timezone"]["datetime_col"]
-    session_cfg = config_file["session"]
+    datetime_col = data_config_file["timezone"]["datetime_col"]
+    session_cfg = session_config_file["session"]
 
     df = convert_to_timezone(
         raw_data,
         datetime_col,
-        config_file["timezone"]["broker"],
-        config_file["timezone"]["target"],
+        data_config_file["timezone"]["broker"],
+        data_config_file["timezone"]["target"],
     )
 
-    df = session_tagging(df, datetime_col, config_file["timezone"]["eod_close"])
-    df = intraday_session_tagging(df, datetime_col, session_cfg)
+    df = session_tagging(
+        df,
+        datetime_col,
+        data_config_file["timezone"]["eod_close"]
+    )
+
+    df = intraday_session_tagging(
+        df,
+        datetime_col,
+        session_cfg
+    )
+
     df = remove_incomplete_days(df)
 
     return df.select(
