@@ -1,0 +1,29 @@
+lookback_window: 10
+specs:
+  historical:
+    open: O_pre_target_1
+    high_cols:
+      - H_pre_target_1
+      - H_pre_target_2
+      - H_target_1
+      - H_target_2
+    low_cols:
+      - L_pre_target_1
+      - L_pre_target_2
+      - L_target_1
+      - L_target_2
+    close: C_target_2
+    prev_close: C_target_2
+    output_col: Sigma_historical
+
+  today:
+    open: O_pre_target_1
+    high_cols:
+      - H_pre_target_1
+      - H_pre_target_2
+    low_cols:
+      - L_pre_target_1
+      - L_pre_target_2
+    close: C_pre_target_2
+    prev_close: _prior_close
+    output_col: Sigma_today
