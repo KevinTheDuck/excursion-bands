@@ -1,6 +1,8 @@
 import polars as pl
 
 from excursion_bands.data import load_parquet, write_parquet, aggregate_sessions, filter_valid_sessions
+from excursion_bands.features.excursion_bands import calculate_excursion_bands
+from excursion_bands.features.volatility import yang_zhang
 from excursion_bands.paths import resolve_path
 from excursion_bands.utils import logger
 from excursion_bands.pipeline import aggregate_1m_data
@@ -176,6 +178,92 @@ def load_aggregated_data(config_file: dict, data: pl.DataFrame | None) -> pl.Dat
         df = filter_valid_sessions(df)
         df = df.with_columns(pl.col("O_pre_target_1").alias("O_ref"))
         df = df.sort("Session", descending=False)
+
+        write_parquet(df, data_path)
+        return df
+
+    df = load_parquet(data_path)
+    return df
+
+
+def load_excursion_bands_data(
+    data_config_file: dict,
+    volatility_config_file: dict,
+    bands_config_file: dict,
+    data: pl.DataFrame | None,
+) -> pl.DataFrame:
+    """
+    Load excursion band feature data from storage or create it from
+    aggregated session data.
+
+    Parameters
+    ----------
+    data_config_file : dict
+        Configuration dictionary containing the output path for
+        excursion band feature data.
+
+        Expected structure:
+        {
+            "processed": {
+                "excursion_bands": "<path_to_excursion_band_parquet>"
+            }
+        }
+
+    volatility_config_file : dict
+        Configuration dictionary for volatility feature calculation.
+
+    bands_config_file : dict
+        Configuration dictionary for excursion band calculation.
+
+    data : pl.DataFrame | None
+        Aggregated session-level dataframe used to generate excursion
+        band features when the cached file does not already exist.
+
+        Expected to already contain:
+        - Session
+        - O_ref
+        - aggregated OHLC bucket columns required by volatility and bands
+
+    Returns
+    -------
+    pl.DataFrame
+        Session-level dataframe containing volatility and excursion band
+        features.
+
+    Notes
+    -----
+    If excursion band data already exists:
+        - Loads directly from parquet storage.
+
+    If excursion band data does not exist:
+        - Computes historical Yang-Zhang volatility
+        - Computes excursion band features
+        - Saves the newly created dataframe to parquet
+
+    Raises
+    ------
+    ValueError
+        If excursion band data does not exist and `data` is None.
+    """
+    _tag_str = "[pipeline/loaders/load_excursion_bands_data]"
+    print(logger(_tag_str, "Loading excursion band feature data"))
+
+    file_path = data_config_file["processed"]["excursion_bands"]
+    data_path, exists = resolve_path(file_path)
+
+    if not exists:
+        print(
+            logger(
+                _tag_str,
+                "Excursion band feature data doesn't exist yet, creating a new one",
+            )
+        )
+
+        if data is None:
+            raise ValueError(logger(_tag_str, "data is needed when data doesn't exist"))
+
+        df = yang_zhang(volatility_config_file, data, "historical")
+        df = calculate_excursion_bands(bands_config_file, df)
 
         write_parquet(df, data_path)
         return df
