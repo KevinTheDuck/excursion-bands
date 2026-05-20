@@ -1,7 +1,8 @@
 from typing import Literal
 import polars as pl
 
-from excursion_bands.features.volatility.loader import load_volatility_spec, VolatilitySpec
+from excursion_bands.features.excursion_bands import calculate_excursion_bands
+from excursion_bands.features.volatility import load_volatility_spec, VolatilitySpec
 from excursion_bands.pipeline import (
     load_raw_data, load_processed_data, load_aggregated_data,
     process_raw_data
@@ -12,6 +13,7 @@ from excursion_bands.utils import logger
 
 data_cfg = load_yaml(CONFIGS / "data/local_nq.yaml")
 sessions_cfg = load_yaml(CONFIGS / "sessions/nq_default.yaml")
+bands_cfg = load_yaml(CONFIGS / "features/bands/nq_default.yaml")
 
 df_1m = load_raw_data(data_cfg)
 df_30m = load_processed_data(data_cfg, df_1m)
@@ -89,3 +91,6 @@ def yang_zhang(config_file: dict, df: pl.DataFrame, mode: Literal["historical", 
 
 aggregated_data = yang_zhang(volatility_specs_cfg, aggregated_data, "historical")
 print(aggregated_data.select(["Session", "Sigma_historical"]).tail(3))
+
+aggregated_data = calculate_excursion_bands(bands_cfg, aggregated_data)
+print(aggregated_data.tail(3))
