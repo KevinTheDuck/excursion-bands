@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Literal
 
 import polars as pl
 
