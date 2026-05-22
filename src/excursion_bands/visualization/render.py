@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+import statistics
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
@@ -20,9 +21,38 @@ def _require_columns(df: pl.DataFrame, columns: Sequence[str]) -> None:
         raise ValueError(f"Missing required columns: {missing}")
 
 
-def plot_session_candles(df: pl.DataFrame, ax=None, candle_width: float = 0.018):
+def _infer_candle_width(
+    x: Sequence[float],
+    width_ratio: float = 0.8,
+    fallback: float = 0.018,
+) -> float:
+    if len(x) < 2:
+        return fallback
+
+    diffs = [
+        delta
+        for delta in (b - a for a, b in zip(x, x[1:], strict=False))
+        if delta > 0
+    ]
+    if not diffs:
+        return fallback
+
+    return statistics.median(diffs) * width_ratio
+
+
+def plot_session_candles(
+    df: pl.DataFrame,
+    ax=None,
+    candle_width: float | None = None,
+):
     """
     Plot one-session OHLC candles colored by intraday session bucket.
+
+    Parameters
+    ----------
+    candle_width : float | None
+        Width of each candle body in matplotlib date units. If omitted,
+        it is inferred from the median bar spacing.
     """
     _require_columns(
         df,
@@ -35,6 +65,8 @@ def plot_session_candles(df: pl.DataFrame, ax=None, candle_width: float = 0.018)
     pdf = df.to_pandas()
     pdf = pdf.sort_values("DateTime")
     x = mdates.date2num(pdf["DateTime"].tolist())
+    if candle_width is None:
+        candle_width = _infer_candle_width(x)
 
     used_labels: set[str] = set()
     for idx, row in enumerate(pdf.itertuples(index=False)):

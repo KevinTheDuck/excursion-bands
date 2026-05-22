@@ -1,3 +1,5 @@
+import statistics
+
 import polars as pl
 
 
@@ -76,3 +78,47 @@ def select_session(df: pl.DataFrame, session: str | None = None) -> pl.DataFrame
 
     validate_single_session(filtered)
     return filtered
+
+
+def infer_timeframe_label(df: pl.DataFrame) -> str | None:
+    """
+    Infer a human-readable timeframe label from sorted `DateTime` values.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Input dataframe containing `DateTime` column.
+
+    Returns
+    -------
+    str | None
+        Timeframe label like "5m" or "2h" when available.
+    """
+    if "DateTime" not in df.columns or df.height < 2:
+        return None
+
+    timestamps = df["DateTime"].to_list()
+    diffs = [
+        (b - a).total_seconds()
+        for a, b in zip(timestamps, timestamps[1:], strict=False)
+        if a is not None and b is not None
+    ]
+    diffs = [diff for diff in diffs if diff > 0]
+    if not diffs:
+        return None
+
+    median_seconds = statistics.median(diffs)
+
+    if median_seconds >= 3600 and median_seconds % 3600 == 0:
+        hours = int(median_seconds / 3600)
+        return f"{hours}h"
+
+    if median_seconds >= 60 and median_seconds % 60 == 0:
+        minutes = int(median_seconds / 60)
+        return f"{minutes}m"
+
+    if median_seconds >= 60:
+        minutes = median_seconds / 60
+        return f"{minutes:.1f}m"
+
+    return f"{median_seconds:.0f}s"
