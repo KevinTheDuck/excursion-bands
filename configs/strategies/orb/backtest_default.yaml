@@ -1,0 +1,5 @@
+data_path:
+  data_config: configs/data/local_nq_5m.yaml
+  sessions_config: configs/sessions/nq_default.yaml
+  volatility_config: configs/features/volatility/specification.yaml
+  bands_config: configs/features/bands/nq_default.yaml

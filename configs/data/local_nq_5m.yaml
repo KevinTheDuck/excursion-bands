@@ -1,0 +1,14 @@
+raw:
+  main: data/raw/nq_1m.parquet
+
+processed:
+  timeframe: 5m
+  main: data/processed/nq_5m.parquet
+  aggregated: data/processed/aggregated.parquet
+  excursion_bands: data/processed/excursion_bands.parquet
+
+timezone:
+  datetime_col: DateTime
+  broker: UTC
+  target: America/New_York
+  eod_close: 17
