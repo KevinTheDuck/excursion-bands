@@ -3,3 +3,8 @@ data_path:
   sessions_config: configs/sessions/nq_default.yaml
   volatility_config: configs/features/volatility/specification.yaml
   bands_config: configs/features/bands/nq_default.yaml
+  variants: configs/strategies/orb/variants
+
+backtest:
+  start_date: 2019-01-01
+  initial_cash: 100000.0

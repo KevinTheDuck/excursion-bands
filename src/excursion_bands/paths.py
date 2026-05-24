@@ -15,5 +15,5 @@ def resolve_path(path: str) -> tuple[Path, bool]:
     p = ROOT / path
 
     # Return a bool to check if file actually exists or not
-    exists = p.is_file()
+    exists = p.exists()
     return p, exists

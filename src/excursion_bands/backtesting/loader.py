@@ -1,7 +1,11 @@
+from datetime import date
 import polars as pl
 
 from typing import Any
-from excursion_bands.backtesting import BacktestConfig, CoreDataConfig
+from excursion_bands.backtesting import (
+    BacktestConfig, CoreDataConfig,
+    BacktestSettingConfig, VariantConfig
+)
 from excursion_bands.data import load_yaml
 from excursion_bands.paths import resolve_path
 from excursion_bands.pipeline import (
@@ -48,6 +52,50 @@ def load_core_data(config: CoreDataConfig) -> tuple[pl.DataFrame, pl.DataFrame]:
 
     return intraday, bands
 
+def load_backtest_setting_config(config: dict) -> BacktestSettingConfig:
+    _tag_str = "[backtesting/loader/load_backtest_setting_config]"
+    print(logger(_tag_str, f"Loading backtest setting"))
+
+    return BacktestSettingConfig(
+        start_date=config["start_date"],
+        initial_cash=config["initial_cash"]
+    )
+
+def load_variants(path: str) -> tuple | None:
+    _tag_str = "[backtesting/loader/load_variants]"
+    logger(_tag_str, f"Loading variants from {path}")
+
+    resolved_path, exists = resolve_path(path)
+    variants = []
+
+    if not exists:
+        raise FileNotFoundError(logger(_tag_str, f"Directory doesn't exists {path}"))
+
+    for file in resolved_path.iterdir():
+        if file.is_file() and file.suffix in {".yaml", ".yml"}:
+            variant = load_yaml(file)
+
+            if variant["active"] == False:
+                continue
+
+            variant_label = variant["metadata"]["label"]
+            variant_configuration = variant["configuration"]
+
+            print(logger(_tag_str, f"Loading {variant_label}"))
+            variants.append(
+                VariantConfig(
+                    label=variant_label,
+                    use_band_filter=variant_configuration["use_band_filter"],
+                    side_mode=variant_configuration["side_mode"],
+                    description=variant["metadata"]["description"]
+                )
+            )
+
+    if len(variants) < 1:
+        return None
+
+    return tuple(variants)
+
 def load_backtest_config(config_path: str) -> BacktestConfig:
     _tag_str = "[backtesting/loader/load_backtest_config]"
     logger(_tag_str, f"Loading backtest config from {config_path}")
@@ -60,6 +108,16 @@ def load_backtest_config(config_path: str) -> BacktestConfig:
         )
 
     config = load_yaml(resolved_path)
+
+    backtest_setting = load_backtest_setting_config(config["backtest"])
+    variants_folder = config["data_path"]["variants"]
+    variants = load_variants(variants_folder)
+
+    if not variants:
+        raise ValueError(logger(_tag_str, f"Directory {variants_folder} doesn't contain any valid yaml file!"))
+
     return BacktestConfig(
-        core_data=CoreDataConfig(**config["data_path"])
+        core_data=CoreDataConfig(**config["data_path"]),
+        backtest=backtest_setting,
+        variants=variants
     )

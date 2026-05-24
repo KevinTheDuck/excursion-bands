@@ -1,0 +1,9 @@
+active: true
+
+metadata:
+  label: ORB BASELINE (NO FILTERING)
+  description: null
+
+configuration:
+  use_band_filter: false
+  side_mode: both

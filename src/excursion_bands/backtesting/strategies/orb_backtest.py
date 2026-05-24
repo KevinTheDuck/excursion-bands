@@ -11,5 +11,11 @@ def start_backtest(config_path: str) -> None:
     config = load_backtest_config(config_path)
     intraday, bands = load_core_data(config.core_data)
 
+    backtest_setting = config.backtest
+    variants = config.variants
+
+    for variant in variants:
+        print(variant.label)
+
     print(intraday.tail(3))
     print(bands.tail(3))

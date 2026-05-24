@@ -1,6 +1,8 @@
 from .specification import (
     BacktestConfig,
     CoreDataConfig,
+    VariantConfig,
+    BacktestSettingConfig,
 )
 
 from .loader import (
@@ -11,6 +13,8 @@ from .loader import (
 __all__ = [
     "BacktestConfig",
     "CoreDataConfig",
+    "VariantConfig",
+    "BacktestSettingConfig",
     "load_backtest_config",
-    "load_core_data"
+    "load_core_data",
 ]
