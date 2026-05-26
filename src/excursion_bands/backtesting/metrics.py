@@ -67,3 +67,49 @@ def calculate_metrics(
         "expectancy": expectancy,
         "exposure_pct": float(exposure * 100),
     }
+
+
+def calculate_yearly_metrics(
+    equity_curve: pd.DataFrame,
+    trades: pd.DataFrame,
+    initial_cash: float,
+) -> pd.DataFrame:
+    if equity_curve.empty:
+        return pd.DataFrame()
+
+    equity = equity_curve.copy()
+    equity["DateTime"] = pd.to_datetime(equity["DateTime"])
+    equity["Year"] = equity["DateTime"].dt.year
+    trades = trades.copy()
+    if not trades.empty:
+        trades["ExitTime"] = pd.to_datetime(trades["ExitTime"])
+        trades["Year"] = trades["ExitTime"].dt.year
+
+    rows = []
+    previous_year_end_equity = initial_cash
+    for year, year_equity in equity.groupby("Year", sort=True):
+        start_equity = previous_year_end_equity
+        end_equity = float(year_equity["Equity"].iloc[-1])
+        previous_year_end_equity = end_equity
+        year_trades = trades[trades["Year"] == year] if not trades.empty else trades
+        wins = year_trades[year_trades["NetPnL"] > 0] if not year_trades.empty else year_trades
+        losses = year_trades[year_trades["NetPnL"] < 0] if not year_trades.empty else year_trades
+        gross_profit = float(wins["NetPnL"].sum()) if not year_trades.empty else 0.0
+        gross_loss = float(abs(losses["NetPnL"].sum())) if not year_trades.empty else 0.0
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
+        win_rate = len(wins) / len(year_trades) if len(year_trades) else None
+
+        rows.append(
+            {
+                "Year": int(year),
+                "StartEquity": float(start_equity),
+                "EndEquity": end_equity,
+                "ReturnPct": float((end_equity / start_equity - 1.0) * 100),
+                "MaxDrawdownPct": float(max_drawdown(year_equity["Equity"].astype(float)) * 100),
+                "Trades": int(len(year_trades)),
+                "WinRatePct": None if win_rate is None else float(win_rate * 100),
+                "ProfitFactor": profit_factor,
+                "NetPnL": float(year_trades["NetPnL"].sum()) if not year_trades.empty else 0.0,
+            }
+        )
+    return pd.DataFrame(rows)

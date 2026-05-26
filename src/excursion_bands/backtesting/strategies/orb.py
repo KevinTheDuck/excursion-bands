@@ -1,0 +1,250 @@
+"""
+Opening range breakout strategy variants.
+"""
+
+from dataclasses import replace
+from datetime import datetime, time
+
+import numpy as np
+import pandas as pd
+
+from excursion_bands.backtesting.engine import run_backtest
+from excursion_bands.backtesting.models import BacktestResult, Position, Signal
+from excursion_bands.backtesting.specification import BacktestConfig, VariantConfig
+
+
+def _parse_time(value: str) -> time:
+    return time.fromisoformat(value)
+
+
+def _rma(source: pd.Series, length: int) -> pd.Series:
+    return source.ewm(alpha=1 / length, adjust=False, min_periods=length).mean()
+
+
+def _force_exit_timestamp(session: object, force_exit: time, bars: pd.DataFrame) -> pd.Timestamp | None:
+    session_bars = bars[bars["Session"] == session]
+    candidates = session_bars[session_bars["BarTime"] <= force_exit]
+    if candidates.empty:
+        return None
+    return pd.to_datetime(candidates["DateTime"].iloc[-1])
+
+
+def prepare_orb_bars(
+    bars: pd.DataFrame, config: BacktestConfig, bands: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    if config.strategy is None:
+        raise ValueError("ORB strategy requires config.strategy")
+
+    strategy = config.strategy
+    df = bars.sort_values("DateTime").reset_index(drop=True).copy()
+    df["DateTime"] = pd.to_datetime(df["DateTime"])
+    df["BarTime"] = df["DateTime"].dt.time
+    if "Session" not in df.columns:
+        df["Session"] = df["DateTime"].dt.date
+
+    or_start = _parse_time(strategy.opening_range.start)
+    or_end = _parse_time(strategy.opening_range.end)
+    force_exit = _parse_time(strategy.force_exit_time)
+
+    or_mask = (df["BarTime"] >= or_start) & (df["BarTime"] < or_end)
+    opening_ranges = (
+        df[or_mask]
+        .groupby("Session", sort=True)
+        .agg(OR_High=("High", "max"), OR_Low=("Low", "min"), OR_End=("DateTime", "max"))
+        .reset_index()
+    )
+    opening_ranges["OR_Mid"] = (opening_ranges["OR_High"] + opening_ranges["OR_Low"]) / 2
+
+    daily = (
+        df.groupby("Session", sort=True)
+        .agg(Session_High=("High", "max"), Session_Low=("Low", "min"))
+        .reset_index()
+    )
+    daily["Daily_Range"] = daily["Session_High"] - daily["Session_Low"]
+    daily["ATR_Session"] = daily["Daily_Range"].rolling(
+        strategy.atr.lookback_sessions, min_periods=strategy.atr.lookback_sessions
+    ).mean().shift(1)
+
+    typical = (df["High"] + df["Low"] + df["Close"]) / 3
+    df["_PV"] = typical * df["Volume"]
+    df["VWAP"] = df.groupby("Session")["_PV"].cumsum() / df.groupby("Session")["Volume"].cumsum()
+
+    prev_close = df["Close"].shift(1)
+    true_range = pd.concat(
+        [
+            df["High"] - df["Low"],
+            (df["High"] - prev_close).abs(),
+            (df["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    df["ATR_Stop"] = _rma(true_range, strategy.atr_stop.length) * strategy.atr_stop.multiplier
+
+    df = df.merge(opening_ranges, on="Session", how="left")
+    df = df.merge(daily[["Session", "ATR_Session"]], on="Session", how="left")
+    if bands is not None:
+        band_cols = [
+            "Session",
+            "Band_AE_Pos_Upper",
+            "Band_FE_Pos_Lower",
+            "Band_AE_Neg_Lower",
+            "Band_FE_Neg_Upper",
+        ]
+        missing = set(band_cols) - set(bands.columns)
+        if missing:
+            raise ValueError(f"Bands data missing required columns: {sorted(missing)}")
+        band_data = bands[band_cols].copy()
+        df = df.merge(band_data, on="Session", how="left")
+    df = df.drop(columns=["_PV"])
+
+    session_to_force_exit = {
+        session: _force_exit_timestamp(session, force_exit, df)
+        for session in df["Session"].dropna().unique()
+    }
+    df["ForceExitTime"] = df["Session"].map(session_to_force_exit)
+
+    after_or = df["DateTime"] > df["OR_End"]
+    df["EntryIndexAfterOR"] = np.nan
+    df.loc[after_or, "EntryIndexAfterOR"] = df[after_or].groupby("Session").cumcount() + 1
+    df["EntryAllowed"] = (
+        after_or
+        & (df["EntryIndexAfterOR"] <= strategy.entry_bars_after_or)
+        & df["OR_High"].notna()
+        & df["OR_Low"].notna()
+        & df["ForceExitTime"].notna()
+    )
+    return df
+
+
+def build_orb_signal(
+    bar: pd.Series, config: BacktestConfig, variant: VariantConfig
+) -> Signal | None:
+    strategy = config.strategy
+    if strategy is None or not bool(bar.EntryAllowed):
+        return None
+
+    if variant.use_atr_buffer and pd.isna(bar.ATR_Session):
+        return None
+
+    buffer_points = strategy.atr.buffer_mult * float(bar.ATR_Session) if variant.use_atr_buffer else 0.0
+    long_breakout = float(bar.Close) > float(bar.OR_High) + buffer_points
+    short_breakout = float(bar.Close) < float(bar.OR_Low) - buffer_points
+
+    if variant.use_vwap_filter:
+        long_breakout = long_breakout and float(bar.Close) > float(bar.VWAP)
+        short_breakout = short_breakout and float(bar.Close) < float(bar.VWAP)
+
+    if variant.use_band_filter:
+        required = [
+            bar.Band_AE_Pos_Upper,
+            bar.Band_FE_Pos_Lower,
+            bar.Band_AE_Neg_Lower,
+            bar.Band_FE_Neg_Upper,
+        ]
+        if any(pd.isna(value) for value in required):
+            return None
+        price = float(bar.Close)
+        long_breakout = long_breakout and (
+            float(bar.Band_AE_Pos_Upper) < price < float(bar.Band_FE_Pos_Lower)
+        )
+        short_breakout = short_breakout and (
+            float(bar.Band_FE_Neg_Upper) < price < float(bar.Band_AE_Neg_Lower)
+        )
+
+    side_mode = variant.side_mode.lower().strip()
+    if side_mode in {"long", "long_only"}:
+        short_breakout = False
+    elif side_mode in {"short", "short_only"}:
+        long_breakout = False
+    elif side_mode != "both":
+        raise ValueError(f"Unsupported side_mode: {variant.side_mode}")
+
+    if not long_breakout and not short_breakout:
+        return None
+
+    side = "long" if long_breakout else "short"
+    stop_mode = "atr" if strategy.atr_stop.enabled else strategy.stop.mode
+    if stop_mode == "orb_boundary":
+        stop_loss = float(bar.OR_Low) if side == "long" else float(bar.OR_High)
+    elif stop_mode == "atr":
+        if pd.isna(bar.ATR_Stop):
+            return None
+        stop_loss = float(bar.Low - bar.ATR_Stop) if side == "long" else float(bar.High + bar.ATR_Stop)
+    else:
+        raise ValueError(f"Unsupported ORB stop mode: {stop_mode}")
+
+    entry_reference = float(bar.Close)
+    risk = abs(entry_reference - stop_loss)
+    if risk <= 0:
+        return None
+    take_profit = (
+        entry_reference + strategy.take_profit.rr * risk
+        if side == "long"
+        else entry_reference - strategy.take_profit.rr * risk
+    )
+    break_even_trigger = None
+    break_even_stop = None
+    if strategy.break_even.enabled:
+        break_even_trigger = (
+            entry_reference + strategy.break_even.trigger_rr * risk
+            if side == "long"
+            else entry_reference - strategy.break_even.trigger_rr * risk
+        )
+        break_even_stop = (
+            entry_reference + strategy.break_even.offset_points
+            if side == "long"
+            else entry_reference - strategy.break_even.offset_points
+        )
+    force_exit_time = pd.to_datetime(bar.ForceExitTime).to_pydatetime()
+    return Signal(
+        side=side,
+        stop_loss=stop_loss,
+        take_profit=float(take_profit),
+        force_exit_time=force_exit_time,
+        break_even_trigger=None if break_even_trigger is None else float(break_even_trigger),
+        break_even_stop=None if break_even_stop is None else float(break_even_stop),
+    )
+
+
+def run_orb_variant(
+    bars: pd.DataFrame,
+    config: BacktestConfig,
+    variant: VariantConfig,
+    allowed_signal_times: set[pd.Timestamp] | None = None,
+) -> BacktestResult:
+    traded_sessions: set[object] = set()
+
+    def signal_func(
+        _index: int, bar: pd.Series, _bars: pd.DataFrame, position: Position | None
+    ) -> Signal | None:
+        session = bar.Session
+        if position is not None or session in traded_sessions:
+            return None
+        signal = _build_orb_signal(bar, config, variant)
+        if signal is not None and allowed_signal_times is not None:
+            if variant.ml_execution_mode == "filter" and pd.Timestamp(bar.DateTime) not in allowed_signal_times:
+                return None
+            if variant.ml_execution_mode not in {"filter", "additive"}:
+                raise ValueError(f"Unsupported ml_execution_mode: {variant.ml_execution_mode}")
+        if signal is None and allowed_signal_times is not None and variant.ml_execution_mode == "additive":
+            if pd.Timestamp(bar.DateTime) in allowed_signal_times:
+                raw_variant = replace(variant, use_band_filter=False, use_ml_filter=False)
+                signal = _build_orb_signal(bar, config, raw_variant)
+        if signal is not None:
+            traded_sessions.add(session)
+        return signal
+
+    return run_backtest(variant.label, bars, config, signal_func)
+
+
+def _build_orb_signal(
+    bar: pd.Series, config: BacktestConfig, variant: VariantConfig
+) -> Signal | None:
+    return build_orb_signal(bar, config, variant)
+
+
+def default_orb_variants() -> tuple[VariantConfig, ...]:
+    return (
+        VariantConfig(label="orb_raw"),
+        VariantConfig(label="orb_raw_bands", use_band_filter=True),
+    )

@@ -23,7 +23,7 @@ execution:
   same_bar_exit_priority: stop
 
 sizing:
-  mode: fixed_units # fixed_units | risk_initial_equity | risk_current_equity
+  mode: risk_current_equity # fixed_units | risk_initial_equity | risk_current_equity
   fixed_units: 1.0
   risk_pct: 0.01
   max_units: null
@@ -36,6 +36,29 @@ benchmark:
   enabled: true
   strategy: buy_and_hold
 
+strategy:
+  name: orb
+  opening_range:
+    start: "09:30"
+    end: "09:35"
+  entry_bars_after_or: 4
+  force_exit_time: "16:00"
+  atr:
+    lookback_sessions: 20
+    buffer_mult: 0.1
+  stop:
+    mode: atr # orb_boundary | atr
+  atr_stop:
+    enabled: true
+    length: 14
+    multiplier: 1.0
+  take_profit:
+    rr: 3.0
+  break_even:
+    enabled: true
+    trigger_rr: 1.0
+    offset_points: 0.0
+
 reports:
   output_dir: data/output/backtests
   save_charts: true
@@ -46,7 +69,37 @@ reports:
     max_paths_plotted: 100
     seed: 42
 
+ml:
+  enabled: true
+  probability_threshold: 0.45
+  min_train_samples: 150
+  warmup_start_date: 2014-01-01
+  train_lookback_months: 60
+  refit_frequency_sessions: 200
+  fallback: allow_all # allow_all | reject_all
+  xgboost:
+    n_estimators: 100
+    max_depth: 3
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    random_state: 42
+
 wfo:
   enabled: false
-  max_parameter_combinations: 100
+  mode: calendar # calendar | sessions
+  train_months: 6
+  test_months: 3
+  step_months: 3
+  train_sessions: 504
+  test_sessions: 63
+  step_sessions: 63
+  objective: profit_factor # sharpe | total_return_pct | cagr_pct | profit_factor | max_drawdown_pct
+  max_parameter_combinations: 512
   max_workers: 1
+  parameter_grid:
+    strategy.entry_bars_after_or: [4, 6]
+    strategy.atr_stop.multiplier: [1.0, 2.0]
+    strategy.take_profit.rr: [2.0, 3.0]
+    strategy.break_even.enabled: [true, false]
+    ml.probability_threshold: [0.4, 0.45, 0.5, 0.55]

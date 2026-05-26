@@ -11,6 +11,7 @@ import yaml
 
 from excursion_bands.backtesting.models import BacktestResult
 from excursion_bands.backtesting.monte_carlo import simulate_trade_bootstrap
+from excursion_bands.backtesting.metrics import calculate_yearly_metrics
 from excursion_bands.backtesting.specification import BacktestConfig
 from excursion_bands.paths import resolve_path
 
@@ -21,6 +22,18 @@ def _format_metric(value: float | int | str | None) -> str:
     if isinstance(value, float):
         return f"{value:.2f}"
     return str(value)
+
+
+def _dataframe_to_markdown(df: pd.DataFrame) -> str:
+    if df.empty:
+        return ""
+    columns = [str(col) for col in df.columns]
+    lines = ["| " + " | ".join(columns) + " |"]
+    lines.append("| " + " | ".join(["---"] * len(columns)) + " |")
+    for _, row in df.iterrows():
+        values = [_format_metric(row[col]) for col in df.columns]
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines)
 
 
 def _save_charts(
@@ -91,6 +104,10 @@ def save_report(result: BacktestResult, config: BacktestConfig) -> Path:
 
     result.equity_curve.to_csv(output_dir / "equity_curve.csv", index=False)
     result.trades.to_csv(output_dir / "trades.csv", index=False)
+    yearly = calculate_yearly_metrics(
+        result.equity_curve, result.trades, config.backtest.initial_cash
+    )
+    yearly.to_csv(output_dir / "yearly_metrics.csv", index=False)
 
     with (output_dir / "metrics.yaml").open("w") as f:
         yaml.safe_dump(result.metrics, f, sort_keys=False)
@@ -129,6 +146,8 @@ def save_report(result: BacktestResult, config: BacktestConfig) -> Path:
     lines.extend(["", "## Execution Assumptions"])
     for key, value in result.config_summary.items():
         lines.append(f"- {key}: {_format_metric(value)}")
+    if not yearly.empty:
+        lines.extend(["", "## Yearly Metrics", "", _dataframe_to_markdown(yearly)])
     (output_dir / "report.md").write_text("\n".join(lines) + "\n")
     return output_dir
 

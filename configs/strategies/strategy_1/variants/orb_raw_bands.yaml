@@ -1,0 +1,12 @@
+active: false
+
+metadata:
+  label: orb_raw_bands
+  description: Raw opening range breakout gated by excursion bands.
+
+configuration:
+  side_mode: long
+  use_atr_buffer: false
+  use_vwap_filter: false
+  use_band_filter: true
+  use_ml_filter: false

@@ -9,8 +9,13 @@ from datetime import date
 @dataclass(frozen=True)
 class VariantConfig:
     label: str
-    use_band_filter: bool
-    side_mode: str
+    use_band_filter: bool = False
+    side_mode: str = "both"
+    use_atr_buffer: bool = False
+    use_vwap_filter: bool = False
+    use_ml_filter: bool = False
+    ml_execution_mode: str = "filter"
+    ml_candidate_scope: str = "variant"
     description: str | None = None
 
 
@@ -80,6 +85,86 @@ class WfoConfig:
     enabled: bool
     max_parameter_combinations: int
     max_workers: int
+    mode: str = "calendar"
+    train_months: int = 6
+    test_months: int = 3
+    step_months: int = 3
+    train_sessions: int = 504
+    test_sessions: int = 63
+    step_sessions: int = 63
+    objective: str = "sharpe"
+    parameter_grid: dict[str, list] | None = None
+
+
+@dataclass(frozen=True)
+class XGBoostConfig:
+    n_estimators: int
+    max_depth: int
+    learning_rate: float
+    subsample: float
+    colsample_bytree: float
+    random_state: int
+
+
+@dataclass(frozen=True)
+class MLConfig:
+    enabled: bool
+    probability_threshold: float
+    min_train_samples: int
+    warmup_start_date: date | None
+    train_lookback_months: int | None
+    refit_frequency_sessions: int
+    fallback: str
+    xgboost: XGBoostConfig
+
+
+@dataclass(frozen=True)
+class OpeningRangeConfig:
+    start: str
+    end: str
+
+
+@dataclass(frozen=True)
+class OrbAtrConfig:
+    lookback_sessions: int
+    buffer_mult: float
+
+
+@dataclass(frozen=True)
+class OrbStopConfig:
+    mode: str
+
+
+@dataclass(frozen=True)
+class OrbAtrStopConfig:
+    enabled: bool
+    length: int
+    multiplier: float
+
+
+@dataclass(frozen=True)
+class OrbTakeProfitConfig:
+    rr: float
+
+
+@dataclass(frozen=True)
+class BreakEvenConfig:
+    enabled: bool
+    trigger_rr: float
+    offset_points: float
+
+
+@dataclass(frozen=True)
+class StrategyConfig:
+    name: str
+    opening_range: OpeningRangeConfig
+    entry_bars_after_or: int
+    force_exit_time: str
+    atr: OrbAtrConfig
+    stop: OrbStopConfig
+    atr_stop: OrbAtrStopConfig
+    take_profit: OrbTakeProfitConfig
+    break_even: BreakEvenConfig
 
 
 @dataclass(frozen=True)
@@ -100,4 +185,6 @@ class BacktestConfig:
     benchmark: BenchmarkConfig
     reports: ReportConfig
     wfo: WfoConfig
+    ml: MLConfig | None = None
+    strategy: StrategyConfig | None = None
     variants: tuple[VariantConfig, ...] = ()

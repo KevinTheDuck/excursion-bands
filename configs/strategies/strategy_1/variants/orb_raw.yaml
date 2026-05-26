@@ -1,0 +1,12 @@
+active: false
+
+metadata:
+  label: orb_raw
+  description: Raw opening range breakout without ATR, VWAP, or band filters.
+
+configuration:
+  side_mode: both
+  use_atr_buffer: false
+  use_vwap_filter: false
+  use_band_filter: false
+  use_ml_filter: false

@@ -9,6 +9,16 @@ import pandas as pd
 
 
 @dataclass(frozen=True)
+class Signal:
+    side: str
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    force_exit_time: datetime | None = None
+    break_even_trigger: float | None = None
+    break_even_stop: float | None = None
+
+
+@dataclass(frozen=True)
 class Trade:
     entry_time: datetime
     exit_time: datetime
@@ -23,7 +33,7 @@ class Trade:
     exit_reason: str
 
 
-@dataclass(frozen=True)
+@dataclass
 class Position:
     side: str
     units: float
@@ -31,7 +41,11 @@ class Position:
     entry_price: float
     stop_loss: float | None
     take_profit: float | None
+    force_exit_time: datetime | None
     entry_commission: float
+    break_even_trigger: float | None = None
+    break_even_stop: float | None = None
+    break_even_moved: bool = False
 
 
 @dataclass(frozen=True)

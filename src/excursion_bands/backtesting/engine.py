@@ -13,11 +13,12 @@ from excursion_bands.backtesting.costs import (
     slippage_points,
 )
 from excursion_bands.backtesting.metrics import calculate_metrics
-from excursion_bands.backtesting.models import BacktestResult, Position, Trade
+from excursion_bands.backtesting.models import BacktestResult, Position, Signal, Trade
 from excursion_bands.backtesting.sizing import calculate_units
 from excursion_bands.backtesting.specification import BacktestConfig
 
-SignalFunc = Callable[[int, pd.Series, pd.DataFrame, Position | None], str | None]
+SignalValue = Signal | str | None
+SignalFunc = Callable[[int, pd.Series, pd.DataFrame, Position | None], SignalValue]
 
 
 def _position_value(position: Position, close_price: float, cfd_point_value: float) -> float:
@@ -38,8 +39,19 @@ def _build_stop_take_profit(
 
 
 def _exit_from_bar(position: Position, bar: pd.Series, priority: str) -> tuple[float, str] | None:
+    if position.force_exit_time is not None and bar.DateTime >= position.force_exit_time:
+        return float(bar.Close), "force_exit"
+
     high = float(bar.High)
     low = float(bar.Low)
+
+    if not position.break_even_moved and position.break_even_trigger is not None:
+        if position.side == "long" and high >= position.break_even_trigger:
+            position.stop_loss = position.break_even_stop
+            position.break_even_moved = True
+        elif position.side == "short" and low <= position.break_even_trigger:
+            position.stop_loss = position.break_even_stop
+            position.break_even_moved = True
 
     if position.side == "long":
         stop_hit = position.stop_loss is not None and low <= position.stop_loss
@@ -57,6 +69,16 @@ def _exit_from_bar(position: Position, bar: pd.Series, priority: str) -> tuple[f
     if tp_hit:
         return float(position.take_profit), "take_profit"
     return None
+
+
+def _normalize_signal(signal: SignalValue) -> Signal | None:
+    if signal is None:
+        return None
+    if isinstance(signal, Signal):
+        return signal
+    if signal in {"long", "short"}:
+        return Signal(side=signal)
+    raise ValueError(f"Unsupported signal value: {signal}")
 
 
 def run_backtest(
@@ -83,40 +105,52 @@ def run_backtest(
     cash = float(config.backtest.initial_cash)
     initial_cash = float(config.backtest.initial_cash)
     position: Position | None = None
-    pending_entry: str | None = None
+    pending_entry: Signal | None = None
     trades: list[Trade] = []
     equity_rows = []
     slip = slippage_points(config.execution, config.instrument)
 
     for i, bar in bars.iterrows():
-        if position is None and pending_entry in {"long", "short"}:
-            entry_price = apply_entry_slippage(pending_entry, float(bar.Open), slip)
+        if position is None and pending_entry is not None:
+            entry_price = apply_entry_slippage(pending_entry.side, float(bar.Open), slip)
+            stop_distance = None
+            if pending_entry.stop_loss is not None:
+                stop_distance = abs(entry_price - pending_entry.stop_loss)
+            elif config.risk.stop_loss_points is not None:
+                stop_distance = config.risk.stop_loss_points
             units = calculate_units(
                 config.sizing,
                 config.instrument,
                 initial_cash,
                 cash,
-                config.risk.stop_loss_points,
+                stop_distance,
             )
             if units > 0:
                 entry_commission = commission_for_units(
                     units, config.execution, config.instrument
                 )
                 cash -= entry_commission
-                stop, take_profit = _build_stop_take_profit(
-                    pending_entry,
-                    entry_price,
-                    config.risk.stop_loss_points,
-                    config.risk.take_profit_points,
-                )
+                if pending_entry.stop_loss is not None or pending_entry.take_profit is not None:
+                    stop = pending_entry.stop_loss
+                    take_profit = pending_entry.take_profit
+                else:
+                    stop, take_profit = _build_stop_take_profit(
+                        pending_entry.side,
+                        entry_price,
+                        config.risk.stop_loss_points,
+                        config.risk.take_profit_points,
+                    )
                 position = Position(
-                    side=pending_entry,
+                    side=pending_entry.side,
                     units=units,
                     entry_time=bar.DateTime,
                     entry_price=entry_price,
                     stop_loss=stop,
                     take_profit=take_profit,
+                    force_exit_time=pending_entry.force_exit_time,
                     entry_commission=entry_commission,
+                    break_even_trigger=pending_entry.break_even_trigger,
+                    break_even_stop=pending_entry.break_even_stop,
                 )
             pending_entry = None
 
@@ -161,8 +195,8 @@ def run_backtest(
                 )
                 position = None
 
-        signal = signal_func(i, bar, bars, position)
-        if position is None and pending_entry is None and signal in {"long", "short"} and i + 1 < len(bars):
+        signal = _normalize_signal(signal_func(i, bar, bars, position))
+        if position is None and pending_entry is None and signal is not None and i + 1 < len(bars):
             pending_entry = signal
 
         unrealized = 0.0
