@@ -12,5 +12,6 @@ wheels/
 # Datasets
 data/raw/*
 data/processed/*
+data/output/*
 
 AGENTS.md

@@ -1,0 +1,52 @@
+data:
+  data_config: configs/data/local_nq_5m.yaml
+  sessions_config: configs/sessions/nq_default.yaml
+  volatility_config: configs/features/volatility/specification.yaml
+  bands_config: configs/features/bands/nq_default.yaml
+  variants: configs/strategies/strategy_1/variants
+
+backtest:
+  start_date: 2019-01-01
+  end_date: null
+  initial_cash: 100000.0
+
+instrument:
+  symbol: NQ
+  point_value: 20.0
+  tick_size: 0.25
+  cfd_point_value: 1.0
+
+execution:
+  commission_per_contract_side: 4.5
+  slippage_ticks_per_side: 3.0
+  fill_on: next_open
+  same_bar_exit_priority: stop
+
+sizing:
+  mode: fixed_units # fixed_units | risk_initial_equity | risk_current_equity
+  fixed_units: 1.0
+  risk_pct: 0.01
+  max_units: null
+
+risk:
+  stop_loss_points: null
+  take_profit_points: null
+
+benchmark:
+  enabled: true
+  strategy: buy_and_hold
+
+reports:
+  output_dir: data/output/backtests
+  save_charts: true
+  monte_carlo:
+    enabled: true
+    simulations: 1000
+    sample_trades: 100
+    max_paths_plotted: 100
+    seed: 42
+
+wfo:
+  enabled: false
+  max_parameter_combinations: 100
+  max_workers: 1
