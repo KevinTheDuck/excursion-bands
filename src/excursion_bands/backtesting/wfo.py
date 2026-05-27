@@ -16,6 +16,7 @@ from excursion_bands.backtesting.models import BacktestResult
 from excursion_bands.backtesting.metrics import calculate_metrics, calculate_yearly_metrics
 from excursion_bands.backtesting.ml import train_ml_filter, write_ml_artifacts
 from excursion_bands.backtesting.specification import BacktestConfig, WfoConfig
+from excursion_bands.backtesting.strategies.donchian import prepare_donchian_bars, run_donchian_variant
 from excursion_bands.backtesting.strategies.orb import prepare_orb_bars, run_orb_variant
 from excursion_bands.paths import resolve_path
 
@@ -44,6 +45,7 @@ def run_wfo(
 
     parameter_sets = _build_parameter_sets(config.wfo)
     validate_parameter_sweep(parameter_sets, config.wfo)
+    prepare_bars, run_variant = _strategy_functions(config)
 
     variants = config.variants
     if not variants:
@@ -103,8 +105,8 @@ def run_wfo(
 
             for params in parameter_sets:
                 trial_config = _patch_config(config, params)
-                trial_prepared = prepare_orb_bars(train_data, trial_config, train_bands)
-                result = run_orb_variant(trial_prepared, trial_config, variant)
+                trial_prepared = prepare_bars(train_data, trial_config, train_bands)
+                result = run_variant(trial_prepared, trial_config, variant)
                 score = _objective_score(result.metrics, config.wfo.objective)
                 train_rows.append(
                     _row_from_result(
@@ -128,13 +130,13 @@ def run_wfo(
             test_config = _patch_config(config, best_params)
             test_data = intraday[intraday["Session"].isin(test_sessions)]
             test_bands = bands[bands["Session"].isin(test_sessions)]
-            test_prepared = prepare_orb_bars(test_data, test_config, test_bands)
+            test_prepared = prepare_bars(test_data, test_config, test_bands)
             allowed_signal_times = None
             if variant.use_ml_filter:
                 ml_train_data, ml_train_bands = _ml_training_window(
                     intraday, bands, fold, config
                 )
-                ml_train_prepared = prepare_orb_bars(ml_train_data, test_config, ml_train_bands)
+                ml_train_prepared = prepare_bars(ml_train_data, test_config, ml_train_bands)
                 ml_result = train_ml_filter(
                     ml_train_prepared, test_prepared, test_config, variant
                 )
@@ -151,7 +153,7 @@ def run_wfo(
                         **ml_result.diagnostics,
                     }
                 )
-            test_result = run_orb_variant(
+            test_result = run_variant(
                 test_prepared, test_config, variant, allowed_signal_times
             )
             compounded_equity = _compound_equity_curve(
@@ -201,6 +203,16 @@ def run_wfo(
     _write_wfo_report(output_dir, config, train_df, test_df, stitched_metrics, ml_df)
     _print_wfo_summary(test_df, output_dir)
     return output_dir
+
+
+def _strategy_functions(config: BacktestConfig):
+    if config.strategy is None:
+        raise ValueError("Missing strategy config")
+    if config.strategy.name == "orb":
+        return prepare_orb_bars, run_orb_variant
+    if config.strategy.name == "donchian":
+        return prepare_donchian_bars, run_donchian_variant
+    raise ValueError(f"Unsupported WFO strategy: {config.strategy.name}")
 
 
 def _build_parameter_sets(wfo: WfoConfig) -> list[dict[str, Any]]:
@@ -254,6 +266,13 @@ def _patch_config(config: BacktestConfig, params: dict[str, Any]) -> BacktestCon
         elif key == "strategy.atr.lookback_sessions":
             patched_strategy = replace(
                 patched_strategy, atr=replace(patched_strategy.atr, lookback_sessions=int(value))
+            )
+        elif key == "strategy.donchian.lookback_bars":
+            if patched_strategy.donchian is None:
+                raise ValueError("Cannot patch strategy.donchian.lookback_bars without donchian config")
+            patched_strategy = replace(
+                patched_strategy,
+                donchian=replace(patched_strategy.donchian, lookback_bars=int(value)),
             )
         elif key == "strategy.atr_stop.enabled":
             patched_strategy = replace(

@@ -1,0 +1,14 @@
+active: true
+
+metadata:
+  label: donchian_band_plus_ml
+  description: Donchian band-filtered breakout augmented with high-confidence raw Donchian ML candidates.
+
+configuration:
+  side_mode: long
+  use_atr_buffer: false
+  use_vwap_filter: false
+  use_band_filter: true
+  use_ml_filter: true
+  ml_execution_mode: additive
+  ml_candidate_scope: raw

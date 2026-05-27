@@ -17,6 +17,7 @@ from excursion_bands.backtesting.costs import (
 )
 from excursion_bands.backtesting.models import Signal
 from excursion_bands.backtesting.specification import BacktestConfig, VariantConfig
+from excursion_bands.backtesting.strategies.donchian import build_donchian_signal
 from excursion_bands.backtesting.strategies.orb import build_orb_signal
 
 
@@ -325,7 +326,7 @@ def build_candidate_dataset(
     for index, bar in prepared.iterrows():
         if index + 1 >= len(prepared) or bar.Session in traded_sessions:
             continue
-        signal = build_orb_signal(bar, config, variant)
+        signal = _build_strategy_signal(bar, config, variant)
         if signal is None:
             continue
         outcome = _simulate_candidate(prepared, index, signal, config)
@@ -360,6 +361,18 @@ def _should_refit_ml(
     if last_fit_index is None:
         return True
     return current_index - last_fit_index >= frequency_sessions
+
+
+def _build_strategy_signal(
+    bar: pd.Series, config: BacktestConfig, variant: VariantConfig
+) -> Signal | None:
+    if config.strategy is None:
+        return None
+    if config.strategy.name == "orb":
+        return build_orb_signal(bar, config, variant)
+    if config.strategy.name == "donchian":
+        return build_donchian_signal(bar, config, variant)
+    raise ValueError(f"Unsupported ML strategy: {config.strategy.name}")
 
 
 def _fit_xgb(train: pd.DataFrame, config: BacktestConfig) -> XGBClassifier | None:

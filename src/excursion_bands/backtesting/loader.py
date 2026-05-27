@@ -13,6 +13,7 @@ from excursion_bands.backtesting.specification import (
     BenchmarkConfig,
     BreakEvenConfig,
     CoreDataConfig,
+    DonchianConfig,
     ExecutionConfig,
     InstrumentConfig,
     MLConfig,
@@ -232,24 +233,33 @@ def load_backtest_config(config_path: str) -> BacktestConfig:
             fallback=str(ml.get("fallback", "allow_all")),
             xgboost=XGBoostConfig(**ml.get("xgboost", {})),
         ),
-        strategy=None if strategy is None else StrategyConfig(
-            name=strategy["name"],
-            opening_range=OpeningRangeConfig(**strategy["opening_range"]),
-            entry_bars_after_or=int(strategy["entry_bars_after_or"]),
-            force_exit_time=strategy["force_exit_time"],
-            atr=OrbAtrConfig(**strategy["atr"]),
-            stop=OrbStopConfig(**strategy["stop"]),
-            atr_stop=OrbAtrStopConfig(
-                enabled=_parse_bool(strategy["atr_stop"].get("enabled", False)),
-                length=int(strategy["atr_stop"]["length"]),
-                multiplier=float(strategy["atr_stop"]["multiplier"]),
-            ),
-            take_profit=OrbTakeProfitConfig(**strategy["take_profit"]),
-            break_even=BreakEvenConfig(
-                enabled=_parse_bool(strategy["break_even"].get("enabled", False)),
-                trigger_rr=float(strategy["break_even"]["trigger_rr"]),
-                offset_points=float(strategy["break_even"]["offset_points"]),
-            ),
-        ),
+        strategy=None if strategy is None else _load_strategy_config(strategy),
         variants=load_variants(core_data.variants),
+    )
+
+
+def _load_strategy_config(strategy: dict[str, Any]) -> StrategyConfig:
+    return StrategyConfig(
+        name=strategy["name"],
+        force_exit_time=strategy["force_exit_time"],
+        atr=OrbAtrConfig(**strategy["atr"]),
+        stop=OrbStopConfig(**strategy["stop"]),
+        atr_stop=OrbAtrStopConfig(
+            enabled=_parse_bool(strategy["atr_stop"].get("enabled", False)),
+            length=int(strategy["atr_stop"]["length"]),
+            multiplier=float(strategy["atr_stop"]["multiplier"]),
+        ),
+        take_profit=OrbTakeProfitConfig(**strategy["take_profit"]),
+        break_even=BreakEvenConfig(
+            enabled=_parse_bool(strategy["break_even"].get("enabled", False)),
+            trigger_rr=float(strategy["break_even"]["trigger_rr"]),
+            offset_points=float(strategy["break_even"]["offset_points"]),
+        ),
+        opening_range=None
+        if strategy.get("opening_range") is None
+        else OpeningRangeConfig(**strategy["opening_range"]),
+        entry_bars_after_or=int(strategy.get("entry_bars_after_or", 0)),
+        donchian=None
+        if strategy.get("donchian") is None
+        else DonchianConfig(lookback_bars=int(strategy["donchian"]["lookback_bars"])),
     )

@@ -155,16 +155,22 @@ class BreakEvenConfig:
 
 
 @dataclass(frozen=True)
+class DonchianConfig:
+    lookback_bars: int
+
+
+@dataclass(frozen=True)
 class StrategyConfig:
     name: str
-    opening_range: OpeningRangeConfig
-    entry_bars_after_or: int
     force_exit_time: str
     atr: OrbAtrConfig
     stop: OrbStopConfig
     atr_stop: OrbAtrStopConfig
     take_profit: OrbTakeProfitConfig
     break_even: BreakEvenConfig
+    opening_range: OpeningRangeConfig | None = None
+    entry_bars_after_or: int = 0
+    donchian: DonchianConfig | None = None
 
 
 @dataclass(frozen=True)

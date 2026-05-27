@@ -8,6 +8,11 @@ from excursion_bands.backtesting.benchmarks import run_buy_and_hold
 from excursion_bands.backtesting.loader import load_backtest_config, load_core_data
 from excursion_bands.backtesting.ml import expanding_ml_filter, write_expanding_ml_artifacts
 from excursion_bands.backtesting.reports import print_receipt, save_report
+from excursion_bands.backtesting.strategies.donchian import (
+    default_donchian_variants,
+    prepare_donchian_bars,
+    run_donchian_variant,
+)
 from excursion_bands.backtesting.strategies.orb import (
     default_orb_variants,
     prepare_orb_bars,
@@ -57,12 +62,20 @@ def start_backtest(config_path: str) -> None:
         run_wfo(intraday_pdf, bands.to_pandas(), config)
         return
 
-    if config.strategy is not None and config.strategy.name == "orb":
-        variants = config.variants or default_orb_variants()
-        prepared = prepare_orb_bars(intraday_pdf, config, bands.to_pandas())
+    if config.strategy is not None and config.strategy.name in {"orb", "donchian"}:
+        if config.strategy.name == "orb":
+            variants = config.variants or default_orb_variants()
+            prepared = prepare_orb_bars(intraday_pdf, config, bands.to_pandas())
+            runner = run_orb_variant
+        else:
+            variants = config.variants or default_donchian_variants()
+            prepared = prepare_donchian_bars(intraday_pdf, config, bands.to_pandas())
+            runner = run_donchian_variant
+
         for variant in variants:
             allowed_signal_times = None
             ml_result = None
+            prepared_variant = prepared.copy()
             if variant.use_ml_filter:
                 ml_variant = variant
                 if variant.ml_candidate_scope == "raw":
@@ -71,14 +84,14 @@ def start_backtest(config_path: str) -> None:
                     raise ValueError(
                         f"Unsupported ml_candidate_scope: {variant.ml_candidate_scope}"
                     )
-                ml_result = expanding_ml_filter(prepared, config, ml_variant)
+                ml_result = expanding_ml_filter(prepared_variant, config, ml_variant)
                 allowed_signal_times = ml_result.allowed_signal_times
                 if not ml_result.predictions.empty:
                     probability_by_time = dict(
                         zip(ml_result.predictions["SignalTime"], ml_result.predictions["Probability"])
                     )
-                    prepared["MLProbability"] = prepared["DateTime"].map(probability_by_time)
-            result = run_orb_variant(prepared, config, variant, allowed_signal_times)
+                    prepared_variant["MLProbability"] = prepared_variant["DateTime"].map(probability_by_time)
+            result = runner(prepared_variant, config, variant, allowed_signal_times)
             output_dir = save_report(result, config)
             if ml_result is not None:
                 write_expanding_ml_artifacts(output_dir, variant.label, ml_result, result.trades)
