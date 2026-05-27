@@ -73,10 +73,15 @@ def start_backtest(config_path: str) -> None:
                     )
                 ml_result = expanding_ml_filter(prepared, config, ml_variant)
                 allowed_signal_times = ml_result.allowed_signal_times
+                if not ml_result.predictions.empty:
+                    probability_by_time = dict(
+                        zip(ml_result.predictions["SignalTime"], ml_result.predictions["Probability"])
+                    )
+                    prepared["MLProbability"] = prepared["DateTime"].map(probability_by_time)
             result = run_orb_variant(prepared, config, variant, allowed_signal_times)
             output_dir = save_report(result, config)
             if ml_result is not None:
-                write_expanding_ml_artifacts(output_dir, variant.label, ml_result)
+                write_expanding_ml_artifacts(output_dir, variant.label, ml_result, result.trades)
             print_receipt(result, output_dir)
             comparison.append((variant.label, result.metrics))
 

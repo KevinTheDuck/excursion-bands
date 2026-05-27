@@ -16,6 +16,8 @@ class Signal:
     force_exit_time: datetime | None = None
     break_even_trigger: float | None = None
     break_even_stop: float | None = None
+    source: str = "strategy"
+    probability: float | None = None
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,8 @@ class Trade:
     net_pnl: float
     return_pct: float
     exit_reason: str
+    source: str = "strategy"
+    probability: float | None = None
 
 
 @dataclass
@@ -46,6 +50,8 @@ class Position:
     break_even_trigger: float | None = None
     break_even_stop: float | None = None
     break_even_moved: bool = False
+    source: str = "strategy"
+    probability: float | None = None
 
 
 @dataclass(frozen=True)

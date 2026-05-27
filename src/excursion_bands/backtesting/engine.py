@@ -151,6 +151,8 @@ def run_backtest(
                     entry_commission=entry_commission,
                     break_even_trigger=pending_entry.break_even_trigger,
                     break_even_stop=pending_entry.break_even_stop,
+                    source=pending_entry.source,
+                    probability=pending_entry.probability,
                 )
             pending_entry = None
 
@@ -191,6 +193,8 @@ def run_backtest(
                         if capital_at_risk > 0
                         else 0.0,
                         exit_reason=exit_reason,
+                        source=position.source,
+                        probability=position.probability,
                     )
                 )
                 position = None
@@ -241,6 +245,8 @@ def run_backtest(
                 net_pnl=net_pnl,
                 return_pct=net_pnl / capital_at_risk if capital_at_risk > 0 else 0.0,
                 exit_reason="final_bar",
+                source=position.source,
+                probability=position.probability,
             )
         )
         equity_rows[-1]["Cash"] = cash
@@ -263,6 +269,8 @@ def run_backtest(
                 "net_pnl",
                 "return_pct",
                 "exit_reason",
+                "source",
+                "probability",
             ]
         )
     trades_df = trades_df.rename(
@@ -278,6 +286,8 @@ def run_backtest(
             "net_pnl": "NetPnL",
             "return_pct": "ReturnPct",
             "exit_reason": "ExitReason",
+            "source": "Source",
+            "probability": "Probability",
         }
     )
     metrics = calculate_metrics(equity_curve, trades_df, initial_cash)

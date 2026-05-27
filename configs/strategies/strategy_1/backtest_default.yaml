@@ -71,7 +71,7 @@ reports:
 
 ml:
   enabled: true
-  probability_threshold: 0.45
+  probability_threshold: 0.35
   min_train_samples: 150
   warmup_start_date: 2014-01-01
   train_lookback_months: 60
@@ -86,7 +86,7 @@ ml:
     random_state: 42
 
 wfo:
-  enabled: false
+  enabled: true
   mode: calendar # calendar | sessions
   train_months: 6
   test_months: 3
@@ -102,4 +102,4 @@ wfo:
     strategy.atr_stop.multiplier: [1.0, 2.0]
     strategy.take_profit.rr: [2.0, 3.0]
     strategy.break_even.enabled: [true, false]
-    ml.probability_threshold: [0.4, 0.45, 0.5, 0.55]
+    ml.probability_threshold: [0.35, 0.4, 0.45, 0.5]

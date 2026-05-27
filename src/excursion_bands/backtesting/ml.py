@@ -67,6 +67,7 @@ class MLFilterResult:
 class ExpandingMLResult:
     allowed_signal_times: set[pd.Timestamp]
     predictions: pd.DataFrame
+    feature_importance: pd.DataFrame
     diagnostics: dict[str, float | int | str]
 
 
@@ -144,7 +145,7 @@ def expanding_ml_filter(
     prepared: pd.DataFrame, config: BacktestConfig, variant: VariantConfig
 ) -> ExpandingMLResult:
     if config.ml is None or not config.ml.enabled:
-        return ExpandingMLResult(set(), pd.DataFrame(), {"status": "disabled"})
+        return ExpandingMLResult(set(), pd.DataFrame(), pd.DataFrame(), {"status": "disabled"})
 
     start_date = config.ml.warmup_start_date or config.backtest.start_date
     filtered = prepared[pd.to_datetime(prepared["DateTime"]).dt.date >= start_date]
@@ -152,7 +153,7 @@ def expanding_ml_filter(
         filtered = filtered[pd.to_datetime(filtered["DateTime"]).dt.date <= config.backtest.end_date]
     dataset = build_candidate_dataset(filtered, config, variant)
     if dataset.empty:
-        return ExpandingMLResult(set(), pd.DataFrame(), {"status": "no_candidates"})
+        return ExpandingMLResult(set(), pd.DataFrame(), pd.DataFrame(), {"status": "no_candidates"})
 
     dataset = dataset.sort_values("SignalTime").reset_index(drop=True)
     allowed: set[pd.Timestamp] = set()
@@ -209,10 +210,19 @@ def expanding_ml_filter(
                 "Reason": reason,
                 "TrainSamples": int(len(train)),
                 "IsTradeWindow": bool(is_trade_window),
+                "entry_price": float(row.entry_price),
+                "exit_price": float(row.exit_price),
+                "gross_r": float(row.gross_r),
+                "exit_reason": row.exit_reason,
             }
         )
 
     predictions = pd.DataFrame(rows)
+    feature_importance = (
+        pd.concat(feature_importance_rows, ignore_index=True)
+        if feature_importance_rows
+        else pd.DataFrame()
+    )
     diagnostics = {
         "status": "expanding",
         "candidates": int(len(dataset)),
@@ -220,9 +230,7 @@ def expanding_ml_filter(
         "rejected_trades": int((~predictions["Allowed"]).sum()),
         "threshold": float(config.ml.probability_threshold),
     }
-    if feature_importance_rows:
-        pd.concat(feature_importance_rows, ignore_index=True)
-    return ExpandingMLResult(allowed, predictions, diagnostics)
+    return ExpandingMLResult(allowed, predictions, feature_importance, diagnostics)
 
 
 def write_ml_artifacts(
@@ -241,10 +249,69 @@ def write_ml_artifacts(
 
 
 def write_expanding_ml_artifacts(
-    output_dir: Path, variant_label: str, result: ExpandingMLResult
+    output_dir: Path, variant_label: str, result: ExpandingMLResult, trades: pd.DataFrame | None = None
 ) -> None:
     if not result.predictions.empty:
         result.predictions.to_csv(output_dir / f"ml_{variant_label}_expanding_predictions.csv", index=False)
+        summary = summarize_expanding_ml(result.predictions, trades)
+        summary.to_csv(output_dir / f"ml_{variant_label}_summary.csv", index=False)
+    if not result.feature_importance.empty:
+        importance = (
+            result.feature_importance.groupby("feature", as_index=False)["importance"]
+            .mean()
+            .sort_values("importance", ascending=False)
+        )
+        importance.to_csv(output_dir / f"ml_{variant_label}_feature_importance.csv", index=False)
+
+
+def summarize_expanding_ml(predictions: pd.DataFrame, trades: pd.DataFrame | None = None) -> pd.DataFrame:
+    rows = []
+    trade_window = predictions[predictions["IsTradeWindow"].astype(bool)].copy()
+    rows.append(_prediction_summary("all_candidates", trade_window))
+    rows.append(_prediction_summary("accepted_candidates", trade_window[trade_window["Allowed"].astype(bool)]))
+    rows.append(_prediction_summary("rejected_candidates", trade_window[~trade_window["Allowed"].astype(bool)]))
+    if trades is not None and not trades.empty and "Source" in trades.columns:
+        for source, group in trades.groupby("Source", dropna=False):
+            rows.append(_trade_summary(f"executed_{source}", group))
+    return pd.DataFrame(rows)
+
+
+def _prediction_summary(label: str, data: pd.DataFrame) -> dict[str, float | int | str | None]:
+    if data.empty:
+        return {"segment": label, "count": 0}
+    wins = data[data["net_r"] > 0]
+    losses = data[data["net_r"] < 0]
+    gross_profit = float(wins["net_r"].sum())
+    gross_loss = float(abs(losses["net_r"].sum()))
+    return {
+        "segment": label,
+        "count": int(len(data)),
+        "win_rate_pct": float((data["net_r"] > 0).mean() * 100),
+        "avg_net_r": float(data["net_r"].mean()),
+        "median_net_r": float(data["net_r"].median()),
+        "total_net_r": float(data["net_r"].sum()),
+        "profit_factor_r": gross_profit / gross_loss if gross_loss > 0 else None,
+        "avg_probability": None if data["Probability"].isna().all() else float(data["Probability"].mean()),
+    }
+
+
+def _trade_summary(label: str, data: pd.DataFrame) -> dict[str, float | int | str | None]:
+    wins = data[data["NetPnL"] > 0]
+    losses = data[data["NetPnL"] < 0]
+    gross_profit = float(wins["NetPnL"].sum())
+    gross_loss = float(abs(losses["NetPnL"].sum()))
+    return {
+        "segment": label,
+        "count": int(len(data)),
+        "win_rate_pct": float((data["NetPnL"] > 0).mean() * 100),
+        "avg_net_pnl": float(data["NetPnL"].mean()),
+        "median_net_pnl": float(data["NetPnL"].median()),
+        "total_net_pnl": float(data["NetPnL"].sum()),
+        "profit_factor_pnl": gross_profit / gross_loss if gross_loss > 0 else None,
+        "avg_probability": None
+        if "Probability" not in data.columns or data["Probability"].isna().all()
+        else float(data["Probability"].mean()),
+    }
 
 
 def build_candidate_dataset(

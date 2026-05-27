@@ -226,10 +226,16 @@ def run_orb_variant(
                 return None
             if variant.ml_execution_mode not in {"filter", "additive"}:
                 raise ValueError(f"Unsupported ml_execution_mode: {variant.ml_execution_mode}")
+            source = "band" if variant.use_band_filter else "ml_filter"
+            signal = replace(signal, source=source, probability=_ml_probability(bar))
         if signal is None and allowed_signal_times is not None and variant.ml_execution_mode == "additive":
             if pd.Timestamp(bar.DateTime) in allowed_signal_times:
                 raw_variant = replace(variant, use_band_filter=False, use_ml_filter=False)
                 signal = _build_orb_signal(bar, config, raw_variant)
+                if signal is not None:
+                    signal = replace(signal, source="ml_additive", probability=_ml_probability(bar))
+        elif signal is not None and allowed_signal_times is None:
+            signal = replace(signal, source="band" if variant.use_band_filter else "raw")
         if signal is not None:
             traded_sessions.add(session)
         return signal
@@ -241,6 +247,13 @@ def _build_orb_signal(
     bar: pd.Series, config: BacktestConfig, variant: VariantConfig
 ) -> Signal | None:
     return build_orb_signal(bar, config, variant)
+
+
+def _ml_probability(bar: pd.Series) -> float | None:
+    value = bar.get("MLProbability")
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
 
 
 def default_orb_variants() -> tuple[VariantConfig, ...]:
