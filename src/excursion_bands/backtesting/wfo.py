@@ -29,8 +29,6 @@ def validate_parameter_sweep(parameters: Sequence[object], config: WfoConfig) ->
             f"Parameter sweep has {len(parameters)} combinations, exceeding "
             f"configured max_parameter_combinations={config.max_parameter_combinations}."
         )
-    if config.max_workers < 1:
-        raise ValueError("wfo.max_workers must be >= 1")
 
 
 def run_wfo(
@@ -40,8 +38,6 @@ def run_wfo(
 ) -> Path:
     if config.strategy is None:
         raise ValueError("WFO requires a strategy config")
-    if config.wfo.max_workers != 1:
-        raise ValueError("WFO currently supports max_workers: 1 to avoid host overload")
 
     parameter_sets = _build_parameter_sets(config.wfo)
     validate_parameter_sweep(parameter_sets, config.wfo)

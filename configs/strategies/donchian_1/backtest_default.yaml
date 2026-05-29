@@ -94,7 +94,7 @@ wfo:
   step_sessions: 63
   objective: profit_factor
   max_parameter_combinations: 512
-  max_workers: 1
+  max_workers: 8
   parameter_grid:
     strategy.donchian.lookback_bars: [20, 40]
     strategy.atr_stop.multiplier: [1.0, 2.0, 3.0]
