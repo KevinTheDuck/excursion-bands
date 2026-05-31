@@ -14,7 +14,7 @@ uv sync
 
 ## Data
 
-Local market data is expected under `data/` and is not committed to git.
+Local market data is expected under `data/` 
 
 Main configured raw input:
 
@@ -69,4 +69,3 @@ data/output/backtests/
 
 - Use `uv run ...` for scripts so `src/` imports resolve correctly.
 - WFO, HMM filtering, Monte Carlo, and research plots are controlled from the strategy YAML configs.
-- Existing scripts under `notebooks/` are plain Python scripts, not Jupyter notebooks.
