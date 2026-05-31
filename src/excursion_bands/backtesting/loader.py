@@ -15,12 +15,13 @@ from excursion_bands.backtesting.specification import (
     CoreDataConfig,
     DonchianConfig,
     ExecutionConfig,
+    HMMConfig,
     InstrumentConfig,
-    MLConfig,
     MonteCarloConfig,
     ReportConfig,
     RiskConfig,
     SizingConfig,
+    WfoResearchConfig,
     OpeningRangeConfig,
     OrbAtrConfig,
     OrbAtrStopConfig,
@@ -29,7 +30,6 @@ from excursion_bands.backtesting.specification import (
     StrategyConfig,
     VariantConfig,
     WfoConfig,
-    XGBoostConfig,
 )
 from excursion_bands.data import load_yaml
 from excursion_bands.paths import resolve_path
@@ -122,9 +122,7 @@ def load_variants(path: str | None) -> tuple[VariantConfig, ...]:
                     side_mode=side_mode,
                     use_atr_buffer=_parse_bool(variant_configuration.get("use_atr_buffer", False)),
                     use_vwap_filter=_parse_bool(variant_configuration.get("use_vwap_filter", False)),
-                    use_ml_filter=_parse_bool(variant_configuration.get("use_ml_filter", False)),
-                    ml_execution_mode=str(variant_configuration.get("ml_execution_mode", "filter")),
-                    ml_candidate_scope=str(variant_configuration.get("ml_candidate_scope", "variant")),
+                    use_hmm_filter=_parse_bool(variant_configuration.get("use_hmm_filter", False)),
                     description=variant["metadata"].get("description"),
                 )
             )
@@ -179,8 +177,9 @@ def load_backtest_config(config_path: str) -> BacktestConfig:
 
     reports = config["reports"]
     monte_carlo = reports.get("monte_carlo", {})
+    wfo_research = reports.get("wfo_research", {})
     wfo = config.get("wfo", {})
-    ml = config.get("ml", {})
+    hmm = config.get("hmm", {})
     strategy = config.get("strategy")
 
     core_data = CoreDataConfig(**data_config)
@@ -206,6 +205,26 @@ def load_backtest_config(config_path: str) -> BacktestConfig:
                 max_paths_plotted=int(monte_carlo.get("max_paths_plotted", 100)),
                 seed=int(monte_carlo.get("seed", 42)),
             ),
+            wfo_research=WfoResearchConfig(
+                enabled=_parse_bool(wfo_research.get("enabled", False)),
+                monte_carlo_enabled=_parse_bool(wfo_research.get("monte_carlo_enabled", False)),
+                monte_carlo_methods=tuple(
+                    str(method) for method in wfo_research.get(
+                        "monte_carlo_methods", ["bootstrap", "reshuffle", "dropout"]
+                    )
+                ),
+                monte_carlo_simulations=int(wfo_research.get("monte_carlo_simulations", 1000)),
+                monte_carlo_sample_trades=int(wfo_research.get("monte_carlo_sample_trades", 0)),
+                monte_carlo_dropout_pct=float(wfo_research.get("monte_carlo_dropout_pct", 0.1)),
+                monte_carlo_max_paths_plotted=int(wfo_research.get("monte_carlo_max_paths_plotted", 100)),
+                monte_carlo_seed=int(wfo_research.get("monte_carlo_seed", 42)),
+                parameter_stability_enabled=_parse_bool(
+                    wfo_research.get("parameter_stability_enabled", True)
+                ),
+                comparative_charts_enabled=_parse_bool(
+                    wfo_research.get("comparative_charts_enabled", True)
+                ),
+            ),
         ),
         wfo=WfoConfig(
             enabled=_parse_bool(wfo.get("enabled", False)),
@@ -219,19 +238,30 @@ def load_backtest_config(config_path: str) -> BacktestConfig:
             test_sessions=int(wfo.get("test_sessions", 63)),
             step_sessions=int(wfo.get("step_sessions", wfo.get("test_sessions", 63))),
             objective=str(wfo.get("objective", "sharpe")),
+            reoptimization_mode=str(wfo.get("reoptimization_mode", "always")),
+            degradation_objective=str(wfo.get("degradation_objective", "total_return_pct")),
+            degradation_threshold=float(wfo.get("degradation_threshold", 0.0)),
             parameter_grid=wfo.get("parameter_grid", {}),
         ),
-        ml=None if not ml else MLConfig(
-            enabled=_parse_bool(ml.get("enabled", False)),
-            probability_threshold=float(ml.get("probability_threshold", 0.55)),
-            min_train_samples=int(ml.get("min_train_samples", 100)),
-            warmup_start_date=_parse_date(ml.get("warmup_start_date")),
+        hmm=None if not hmm else HMMConfig(
+            enabled=_parse_bool(hmm.get("enabled", False)),
+            n_states=int(hmm.get("n_states", 3)),
+            max_iter=int(hmm.get("max_iter", 50)),
+            random_state=int(hmm.get("random_state", 42)),
+            min_train_samples=int(hmm.get("min_train_samples", 100)),
+            min_state_trades=int(hmm.get("min_state_trades", 20)),
+            min_state_net_r=float(hmm.get("min_state_net_r", 0.0)),
+            min_state_win_rate=float(hmm.get("min_state_win_rate", 0.0)),
+            top_states=int(hmm.get("top_states", 1)),
+            validation_fraction=float(hmm.get("validation_fraction", 0.25)),
+            min_validation_trades=int(hmm.get("min_validation_trades", 10)),
+            min_validation_net_r_improvement=float(hmm.get("min_validation_net_r_improvement", 0.0)),
+            min_validation_allow_rate=float(hmm.get("min_validation_allow_rate", 0.25)),
+            warmup_start_date=_parse_date(hmm.get("warmup_start_date")),
             train_lookback_months=None
-            if ml.get("train_lookback_months") is None
-            else int(ml.get("train_lookback_months")),
-            refit_frequency_sessions=int(ml.get("refit_frequency_sessions", 20)),
-            fallback=str(ml.get("fallback", "allow_all")),
-            xgboost=XGBoostConfig(**ml.get("xgboost", {})),
+            if hmm.get("train_lookback_months") is None
+            else int(hmm.get("train_lookback_months")),
+            fallback=str(hmm.get("fallback", "reject_all")),
         ),
         strategy=None if strategy is None else _load_strategy_config(strategy),
         variants=load_variants(core_data.variants),

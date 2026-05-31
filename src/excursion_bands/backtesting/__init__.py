@@ -6,8 +6,8 @@ from .specification import (
     BreakEvenConfig,
     CoreDataConfig,
     ExecutionConfig,
+    HMMConfig,
     InstrumentConfig,
-    MLConfig,
     MonteCarloConfig,
     OpeningRangeConfig,
     OrbAtrConfig,
@@ -20,7 +20,6 @@ from .specification import (
     StrategyConfig,
     VariantConfig,
     WfoConfig,
-    XGBoostConfig,
 )
 
 __all__ = [
@@ -30,8 +29,8 @@ __all__ = [
     "BreakEvenConfig",
     "CoreDataConfig",
     "ExecutionConfig",
+    "HMMConfig",
     "InstrumentConfig",
-    "MLConfig",
     "MonteCarloConfig",
     "OpeningRangeConfig",
     "OrbAtrConfig",
@@ -44,7 +43,6 @@ __all__ = [
     "StrategyConfig",
     "VariantConfig",
     "WfoConfig",
-    "XGBoostConfig",
     "load_backtest_config",
     "load_core_data",
 ]

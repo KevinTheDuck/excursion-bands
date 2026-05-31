@@ -68,22 +68,35 @@ reports:
     sample_trades: 100
     max_paths_plotted: 100
     seed: 42
+  wfo_research:
+    enabled: true
+    monte_carlo_enabled: true
+    monte_carlo_methods: [bootstrap, reshuffle, dropout]
+    monte_carlo_simulations: 1000
+    monte_carlo_sample_trades: 0
+    monte_carlo_dropout_pct: 0.1
+    monte_carlo_max_paths_plotted: 100
+    monte_carlo_seed: 42
+    parameter_stability_enabled: true
+    comparative_charts_enabled: true
 
-ml:
+hmm:
   enabled: true
-  probability_threshold: 0.35
+  n_states: 3
+  max_iter: 50
+  random_state: 42
   min_train_samples: 150
+  min_state_trades: 20
+  min_state_net_r: 0.0
+  min_state_win_rate: 0.0
+  top_states: 2
+  validation_fraction: 0.25
+  min_validation_trades: 10
+  min_validation_net_r_improvement: 0.0
+  min_validation_allow_rate: 0.25
   warmup_start_date: 2014-01-01
   train_lookback_months: 60
-  refit_frequency_sessions: 200
   fallback: allow_all # allow_all | reject_all
-  xgboost:
-    n_estimators: 100
-    max_depth: 3
-    learning_rate: 0.05
-    subsample: 0.8
-    colsample_bytree: 0.8
-    random_state: 42
 
 wfo:
   enabled: true
@@ -95,11 +108,14 @@ wfo:
   test_sessions: 63
   step_sessions: 63
   objective: profit_factor # sharpe | total_return_pct | cagr_pct | profit_factor | max_drawdown_pct
+  reoptimization_mode: degradation # always | degradation
+  degradation_objective: total_return_pct
+  degradation_threshold: 0.0
   max_parameter_combinations: 512
   max_workers: 1
   parameter_grid:
     strategy.entry_bars_after_or: [4, 6]
+    features.bands.lookback_window: [10, 20, 40]
     strategy.atr_stop.multiplier: [1.0, 2.0]
     strategy.take_profit.rr: [2.0, 3.0]
     strategy.break_even.enabled: [true, false]
-    ml.probability_threshold: [0.35, 0.4, 0.45, 0.5]

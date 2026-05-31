@@ -1,0 +1,12 @@
+active: true
+
+metadata:
+  label: donchian_raw_bands_hmm
+  description: Donchian breakout gated by excursion bands and HMM regime state.
+
+configuration:
+  side_mode: long
+  use_atr_buffer: false
+  use_vwap_filter: false
+  use_band_filter: true
+  use_hmm_filter: true

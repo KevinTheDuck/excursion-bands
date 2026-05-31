@@ -1,4 +1,4 @@
-lookback_window: 10
+lookback_window: 20
 
 threshold:
   tau_0: 0.4

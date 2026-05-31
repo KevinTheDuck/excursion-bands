@@ -11,7 +11,7 @@ import pandas as pd
 from excursion_bands.backtesting.engine import run_backtest
 from excursion_bands.backtesting.models import BacktestResult, Position, Signal
 from excursion_bands.backtesting.specification import BacktestConfig, VariantConfig
-from excursion_bands.backtesting.strategies.orb import _force_exit_timestamp, _ml_probability, _rma
+from excursion_bands.backtesting.strategies.orb import _force_exit_timestamp, _rma
 
 
 def _parse_time(value: str) -> time:
@@ -201,18 +201,10 @@ def run_donchian_variant(
             return None
         signal = build_donchian_signal(bar, config, variant)
         if signal is not None and allowed_signal_times is not None:
-            if variant.ml_execution_mode == "filter" and pd.Timestamp(bar.DateTime) not in allowed_signal_times:
+            if pd.Timestamp(bar.DateTime) not in allowed_signal_times:
                 return None
-            if variant.ml_execution_mode not in {"filter", "additive"}:
-                raise ValueError(f"Unsupported ml_execution_mode: {variant.ml_execution_mode}")
-            source = "band" if variant.use_band_filter else "ml_filter"
-            signal = replace(signal, source=source, probability=_ml_probability(bar))
-        if signal is None and allowed_signal_times is not None and variant.ml_execution_mode == "additive":
-            if pd.Timestamp(bar.DateTime) in allowed_signal_times:
-                raw_variant = replace(variant, use_band_filter=False, use_ml_filter=False)
-                signal = build_donchian_signal(bar, config, raw_variant)
-                if signal is not None:
-                    signal = replace(signal, source="ml_additive", probability=_ml_probability(bar))
+            source = "band_hmm" if variant.use_band_filter else "raw_hmm"
+            signal = replace(signal, source=source)
         elif signal is not None and allowed_signal_times is None:
             signal = replace(signal, source="band" if variant.use_band_filter else "raw")
         if signal is not None:

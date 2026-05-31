@@ -9,4 +9,4 @@ configuration:
   use_atr_buffer: false
   use_vwap_filter: false
   use_band_filter: false
-  use_ml_filter: false
+  use_hmm_filter: false

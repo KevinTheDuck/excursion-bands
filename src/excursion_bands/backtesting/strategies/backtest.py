@@ -2,11 +2,9 @@
 Backtest entrypoint used by executable research scripts.
 """
 
-from dataclasses import replace
-
 from excursion_bands.backtesting.benchmarks import run_buy_and_hold
+from excursion_bands.backtesting.hmm import train_hmm_filter, write_hmm_artifacts
 from excursion_bands.backtesting.loader import load_backtest_config, load_core_data
-from excursion_bands.backtesting.ml import expanding_ml_filter, write_expanding_ml_artifacts
 from excursion_bands.backtesting.reports import print_receipt, save_report
 from excursion_bands.backtesting.strategies.donchian import (
     default_donchian_variants,
@@ -74,27 +72,24 @@ def start_backtest(config_path: str) -> None:
 
         for variant in variants:
             allowed_signal_times = None
-            ml_result = None
+            hmm_result = None
             prepared_variant = prepared.copy()
-            if variant.use_ml_filter:
-                ml_variant = variant
-                if variant.ml_candidate_scope == "raw":
-                    ml_variant = replace(variant, use_band_filter=False, use_ml_filter=False)
-                elif variant.ml_candidate_scope != "variant":
-                    raise ValueError(
-                        f"Unsupported ml_candidate_scope: {variant.ml_candidate_scope}"
-                    )
-                ml_result = expanding_ml_filter(prepared_variant, config, ml_variant)
-                allowed_signal_times = ml_result.allowed_signal_times
-                if not ml_result.predictions.empty:
-                    probability_by_time = dict(
-                        zip(ml_result.predictions["SignalTime"], ml_result.predictions["Probability"])
-                    )
-                    prepared_variant["MLProbability"] = prepared_variant["DateTime"].map(probability_by_time)
+            if variant.use_hmm_filter:
+                if config.hmm is None:
+                    raise ValueError("HMM variant requires hmm config")
+                start = config.backtest.start_date
+                train_prepared = prepared_variant[
+                    prepared_variant["DateTime"].dt.date < start
+                ]
+                test_prepared = prepared_variant[
+                    prepared_variant["DateTime"].dt.date >= start
+                ]
+                hmm_result = train_hmm_filter(train_prepared, test_prepared, config, variant)
+                allowed_signal_times = hmm_result.allowed_signal_times
             result = runner(prepared_variant, config, variant, allowed_signal_times)
             output_dir = save_report(result, config)
-            if ml_result is not None:
-                write_expanding_ml_artifacts(output_dir, variant.label, ml_result, result.trades)
+            if hmm_result is not None:
+                write_hmm_artifacts(output_dir, variant.label, 0, hmm_result)
             print_receipt(result, output_dir)
             comparison.append((variant.label, result.metrics))
 

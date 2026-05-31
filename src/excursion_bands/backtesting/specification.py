@@ -13,9 +13,7 @@ class VariantConfig:
     side_mode: str = "both"
     use_atr_buffer: bool = False
     use_vwap_filter: bool = False
-    use_ml_filter: bool = False
-    ml_execution_mode: str = "filter"
-    ml_candidate_scope: str = "variant"
+    use_hmm_filter: bool = False
     description: str | None = None
 
 
@@ -74,10 +72,25 @@ class MonteCarloConfig:
 
 
 @dataclass(frozen=True)
+class WfoResearchConfig:
+    enabled: bool = False
+    monte_carlo_enabled: bool = False
+    monte_carlo_methods: tuple[str, ...] = ("bootstrap", "reshuffle", "dropout")
+    monte_carlo_simulations: int = 1000
+    monte_carlo_sample_trades: int = 0
+    monte_carlo_dropout_pct: float = 0.1
+    monte_carlo_max_paths_plotted: int = 100
+    monte_carlo_seed: int = 42
+    parameter_stability_enabled: bool = True
+    comparative_charts_enabled: bool = True
+
+
+@dataclass(frozen=True)
 class ReportConfig:
     output_dir: str
     save_charts: bool
     monte_carlo: MonteCarloConfig
+    wfo_research: WfoResearchConfig
 
 
 @dataclass(frozen=True)
@@ -93,29 +106,30 @@ class WfoConfig:
     test_sessions: int = 63
     step_sessions: int = 63
     objective: str = "sharpe"
+    reoptimization_mode: str = "always"
+    degradation_objective: str = "total_return_pct"
+    degradation_threshold: float = 0.0
     parameter_grid: dict[str, list] | None = None
 
 
 @dataclass(frozen=True)
-class XGBoostConfig:
-    n_estimators: int
-    max_depth: int
-    learning_rate: float
-    subsample: float
-    colsample_bytree: float
-    random_state: int
-
-
-@dataclass(frozen=True)
-class MLConfig:
+class HMMConfig:
     enabled: bool
-    probability_threshold: float
+    n_states: int
+    max_iter: int
+    random_state: int
     min_train_samples: int
+    min_state_trades: int
+    min_state_net_r: float
+    min_state_win_rate: float
+    top_states: int
+    validation_fraction: float
+    min_validation_trades: int
+    min_validation_net_r_improvement: float
+    min_validation_allow_rate: float
     warmup_start_date: date | None
     train_lookback_months: int | None
-    refit_frequency_sessions: int
     fallback: str
-    xgboost: XGBoostConfig
 
 
 @dataclass(frozen=True)
@@ -191,6 +205,6 @@ class BacktestConfig:
     benchmark: BenchmarkConfig
     reports: ReportConfig
     wfo: WfoConfig
-    ml: MLConfig | None = None
+    hmm: HMMConfig | None = None
     strategy: StrategyConfig | None = None
     variants: tuple[VariantConfig, ...] = ()
