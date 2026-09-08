@@ -18,6 +18,7 @@ class Signal:
     break_even_stop: float | None = None
     source: str = "strategy"
     probability: float | None = None
+    session: object | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class Position:
     break_even_moved: bool = False
     source: str = "strategy"
     probability: float | None = None
+    initial_stop_loss: float | None = None
 
 
 @dataclass(frozen=True)

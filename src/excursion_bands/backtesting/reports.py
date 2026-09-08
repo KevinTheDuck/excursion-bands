@@ -2,21 +2,21 @@
 Backtest artifact and terminal reporting.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
 
+from excursion_bands.backtesting.metrics import calculate_yearly_metrics
 from excursion_bands.backtesting.models import BacktestResult
 from excursion_bands.backtesting.monte_carlo import simulate_trade_bootstrap
-from excursion_bands.backtesting.metrics import calculate_yearly_metrics
 from excursion_bands.backtesting.specification import BacktestConfig
 from excursion_bands.paths import resolve_path
 
 
-def _format_metric(value: float | int | str | None) -> str:
+def _format_metric(value: float | str | None) -> str:
     if value is None:
         return "n/a"
     if isinstance(value, float):
@@ -56,7 +56,12 @@ def _save_charts(
     fig.savefig(output_dir / "equity_curve.png", dpi=140)
     plt.close(fig)
 
-    drawdown = equity["Equity"] / equity["Equity"].cummax() - 1.0
+    initial_equity = float(result.metrics.get("initial_cash", equity["Equity"].iloc[0]))
+    path_equity = pd.concat(
+        [pd.Series([initial_equity]), equity["Equity"].astype(float).reset_index(drop=True)],
+        ignore_index=True,
+    )
+    drawdown = (path_equity / path_equity.cummax() - 1.0).iloc[1:]
     fig, ax = plt.subplots(figsize=(11, 4))
     ax.fill_between(equity["DateTime"], drawdown * 100, 0, alpha=0.35)
     ax.set_title(f"{result.name} Drawdown")
@@ -98,14 +103,15 @@ def _save_charts(
 
 def save_report(result: BacktestResult, config: BacktestConfig) -> Path:
     root, _ = resolve_path(config.reports.output_dir)
-    run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{result.name}"
+    run_id = f"{datetime.now(UTC).astimezone().strftime('%Y%m%d_%H%M%S')}_{result.name}"
     output_dir = root / run_id
     output_dir.mkdir(parents=True, exist_ok=False)
 
     result.equity_curve.to_csv(output_dir / "equity_curve.csv", index=False)
     result.trades.to_csv(output_dir / "trades.csv", index=False)
+    result_initial_cash = float(result.metrics.get("initial_cash", config.backtest.initial_cash))
     yearly = calculate_yearly_metrics(
-        result.equity_curve, result.trades, config.backtest.initial_cash
+        result.equity_curve, result.trades, result_initial_cash
     )
     yearly.to_csv(output_dir / "yearly_metrics.csv", index=False)
 
@@ -117,7 +123,7 @@ def save_report(result: BacktestResult, config: BacktestConfig) -> Path:
     if config.reports.monte_carlo.enabled:
         monte_carlo_paths, monte_carlo_summary = simulate_trade_bootstrap(
             result.trades,
-            config.backtest.initial_cash,
+            float(result.metrics.get("initial_cash", config.backtest.initial_cash)),
             config.reports.monte_carlo.simulations,
             config.reports.monte_carlo.sample_trades,
             config.reports.monte_carlo.seed,

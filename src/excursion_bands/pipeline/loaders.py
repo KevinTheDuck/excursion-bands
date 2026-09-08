@@ -1,11 +1,22 @@
 import polars as pl
 
-from excursion_bands.data import load_parquet, write_parquet, aggregate_sessions, filter_valid_sessions
+from excursion_bands.data import (
+    aggregate_sessions,
+    filter_valid_sessions,
+    load_parquet,
+    write_parquet,
+)
+from excursion_bands.data.cache import (
+    cache_fingerprint,
+    cache_is_valid,
+    write_cache_metadata,
+)
 from excursion_bands.features.excursion_bands import calculate_excursion_bands
 from excursion_bands.features.volatility import yang_zhang
 from excursion_bands.paths import resolve_path
-from excursion_bands.utils import logger
 from excursion_bands.pipeline import aggregate_1m_data
+from excursion_bands.utils import logger
+
 
 def load_raw_data(config_file: dict) -> pl.DataFrame:
     """
@@ -40,6 +51,7 @@ def load_raw_data(config_file: dict) -> pl.DataFrame:
     data_path, _ = resolve_path(file_path)
     df = load_parquet(data_path)
     return df
+
 
 def load_processed_data(
     config_file: dict, raw_data: pl.DataFrame | None
@@ -96,8 +108,14 @@ def load_processed_data(
     )
 
     data_path, exists = resolve_path(file_path)
+    raw_path, _ = resolve_path(config_file["raw"]["main"])
+    fingerprint = cache_fingerprint(
+        files=[raw_path],
+        config={"timeframe": desired_timeframe, "timezone": config_file.get("timezone", {})},
+    )
 
-    if not exists:
+    cache_valid = exists and cache_is_valid(data_path, fingerprint)
+    if not cache_valid:
         print(
             logger(
                 _tag_str,
@@ -109,13 +127,20 @@ def load_processed_data(
             raise ValueError(logger(_tag_str, "raw_data is needed when data doesn't exist"))
 
         df = aggregate_1m_data(raw_data, desired_timeframe)
-        write_parquet(df, data_path)
+        write_parquet(df, data_path, overwrite=exists)
+        write_cache_metadata(data_path, fingerprint)
         return df
 
     df = load_parquet(data_path)
     return df
 
-def load_aggregated_data(config_file: dict, data: pl.DataFrame | None) -> pl.DataFrame:
+
+def load_aggregated_data(
+    config_file: dict,
+    data: pl.DataFrame | None,
+    *,
+    session_config: dict | None = None,
+) -> pl.DataFrame:
     """
     Load aggregated session-level data from storage or create it from
     processed intraday data.
@@ -143,6 +168,10 @@ def load_aggregated_data(config_file: dict, data: pl.DataFrame | None) -> pl.Dat
         - OHLCV columns
         - any required fields used by `aggregate_sessions()`
 
+    session_config : dict, optional
+        Session tagging configuration used to invalidate the derived cache
+        when session definitions change.
+
     Returns
     -------
     pl.DataFrame
@@ -165,8 +194,18 @@ def load_aggregated_data(config_file: dict, data: pl.DataFrame | None) -> pl.Dat
 
     file_path = config_file["processed"]["aggregated"]
     data_path, exists = resolve_path(file_path)
+    source_path, _ = resolve_path(config_file["processed"]["main"])
+    fingerprint = cache_fingerprint(
+        frames=[data] if data is not None else None,
+        files=[source_path],
+        config={
+            "timezone": config_file.get("timezone", {}),
+            "session": session_config or {},
+        },
+    )
 
-    if not exists:
+    cache_valid = exists and (data is None or cache_is_valid(data_path, fingerprint))
+    if not cache_valid:
         print(
             logger(_tag_str, "Aggregated data doesn't exist yet, creating a new one")
         )
@@ -179,7 +218,8 @@ def load_aggregated_data(config_file: dict, data: pl.DataFrame | None) -> pl.Dat
         df = df.with_columns(pl.col("O_pre_target_1").alias("O_ref"))
         df = df.sort("Session", descending=False)
 
-        write_parquet(df, data_path)
+        write_parquet(df, data_path, overwrite=exists)
+        write_cache_metadata(data_path, fingerprint)
         return df
 
     df = load_parquet(data_path)
@@ -250,8 +290,15 @@ def load_excursion_bands_data(
 
     file_path = data_config_file["processed"]["excursion_bands"]
     data_path, exists = resolve_path(file_path)
+    source_path, _ = resolve_path(data_config_file["processed"]["aggregated"])
+    fingerprint = cache_fingerprint(
+        frames=[data] if data is not None else None,
+        files=[source_path],
+        config={"volatility": volatility_config_file, "bands": bands_config_file},
+    )
 
-    if not exists:
+    cache_valid = exists and (data is None or cache_is_valid(data_path, fingerprint))
+    if not cache_valid:
         print(
             logger(
                 _tag_str,
@@ -265,7 +312,8 @@ def load_excursion_bands_data(
         df = yang_zhang(volatility_config_file, data, "historical")
         df = calculate_excursion_bands(bands_config_file, df)
 
-        write_parquet(df, data_path)
+        write_parquet(df, data_path, overwrite=exists)
+        write_cache_metadata(data_path, fingerprint)
         return df
 
     df = load_parquet(data_path)

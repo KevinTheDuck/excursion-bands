@@ -23,7 +23,7 @@ def simulate_trade_bootstrap(
     for simulation in range(simulations):
         sample = rng.choice(pnls, size=sample_trades, replace=True)
         equity = initial_cash + np.cumsum(sample)
-        peak = np.maximum.accumulate(equity)
+        peak = np.maximum.accumulate(np.concatenate(([initial_cash], equity)))[1:]
         drawdown = equity / peak - 1.0
         for step, value in enumerate(equity, start=1):
             path_rows.append(

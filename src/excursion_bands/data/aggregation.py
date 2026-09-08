@@ -14,7 +14,7 @@ def aggregate_sessions(df: pl.DataFrame) -> pl.DataFrame:
 
     # Each row represents single trading day
     return (
-        df.group_by(["Session", "Intraday_Session"])
+        df.sort("DateTime").group_by(["Session", "Intraday_Session"])
         .agg(
             [
                 pl.col("Open").first().alias("O"),

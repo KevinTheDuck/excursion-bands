@@ -3,7 +3,7 @@ Opening range breakout strategy variants.
 """
 
 from dataclasses import replace
-from datetime import datetime, time
+from datetime import time
 
 import numpy as np
 import pandas as pd
@@ -23,10 +23,24 @@ def _rma(source: pd.Series, length: int) -> pd.Series:
 
 def _force_exit_timestamp(session: object, force_exit: time, bars: pd.DataFrame) -> pd.Timestamp | None:
     session_bars = bars[bars["Session"] == session]
-    candidates = session_bars[session_bars["BarTime"] <= force_exit]
-    if candidates.empty:
+    if session_bars.empty:
         return None
-    return pd.to_datetime(candidates["DateTime"].iloc[-1])
+    # Session labels may span midnight (18:00 through 16:55).  Prefer the
+    # final bar at or before the cutoff so 18:00 is never mistaken for 16:00.
+    candidates = session_bars[session_bars["BarTime"] <= force_exit]
+    if not candidates.empty:
+        return pd.to_datetime(candidates["DateTime"].iloc[-1])
+    candidates = session_bars[session_bars["BarTime"] >= force_exit]
+    if not candidates.empty:
+        return pd.to_datetime(candidates["DateTime"].iloc[0])
+    return None
+
+
+def _force_exit_times(bars: pd.DataFrame, force_exit: time) -> pd.Series:
+    """Find cutoffs without rescanning the full frame for every session."""
+    before = bars[bars["BarTime"] <= force_exit].groupby("Session")["DateTime"].max()
+    fallback = bars.groupby("Session")["DateTime"].min()
+    return bars["Session"].map(before.combine_first(fallback))
 
 
 def prepare_orb_bars(
@@ -41,6 +55,8 @@ def prepare_orb_bars(
     df["BarTime"] = df["DateTime"].dt.time
     if "Session" not in df.columns:
         df["Session"] = df["DateTime"].dt.date
+    else:
+        df["Session"] = pd.to_datetime(df["Session"]).dt.date
 
     or_start = _parse_time(strategy.opening_range.start)
     or_end = _parse_time(strategy.opening_range.end)
@@ -94,14 +110,11 @@ def prepare_orb_bars(
         if missing:
             raise ValueError(f"Bands data missing required columns: {sorted(missing)}")
         band_data = bands[band_cols].copy()
+        band_data["Session"] = pd.to_datetime(band_data["Session"]).dt.date
         df = df.merge(band_data, on="Session", how="left")
     df = df.drop(columns=["_PV"])
 
-    session_to_force_exit = {
-        session: _force_exit_timestamp(session, force_exit, df)
-        for session in df["Session"].dropna().unique()
-    }
-    df["ForceExitTime"] = df["Session"].map(session_to_force_exit)
+    df["ForceExitTime"] = _force_exit_times(df, force_exit)
 
     after_or = df["DateTime"] > df["OR_End"]
     df["EntryIndexAfterOR"] = np.nan
@@ -121,6 +134,8 @@ def build_orb_signal(
 ) -> Signal | None:
     strategy = config.strategy
     if strategy is None or not bool(bar.EntryAllowed):
+        return None
+    if pd.isna(bar.ForceExitTime) or pd.Timestamp(bar.DateTime) >= pd.Timestamp(bar.ForceExitTime):
         return None
 
     if variant.use_atr_buffer and pd.isna(bar.ATR_Session):
@@ -203,6 +218,7 @@ def build_orb_signal(
         force_exit_time=force_exit_time,
         break_even_trigger=None if break_even_trigger is None else float(break_even_trigger),
         break_even_stop=None if break_even_stop is None else float(break_even_stop),
+        session=bar.Session,
     )
 
 
@@ -211,6 +227,9 @@ def run_orb_variant(
     config: BacktestConfig,
     variant: VariantConfig,
     allowed_signal_times: set[pd.Timestamp] | None = None,
+    *,
+    starting_cash: float | None = None,
+    session_filter: set[object] | None = None,
 ) -> BacktestResult:
     traded_sessions: set[object] = set()
 
@@ -232,7 +251,15 @@ def run_orb_variant(
             traded_sessions.add(session)
         return signal
 
-    return run_backtest(variant.label, bars, config, signal_func)
+    return run_backtest(
+        variant.label,
+        bars,
+        config,
+        signal_func,
+        starting_cash=starting_cash,
+        session_filter=session_filter,
+        fast_rows=True,
+    )
 
 
 def _build_orb_signal(

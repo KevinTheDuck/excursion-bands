@@ -8,11 +8,29 @@ import numpy as np
 import pandas as pd
 
 
-def max_drawdown(equity: pd.Series) -> float:
-    if equity.empty:
+def max_drawdown(equity: pd.Series, initial_equity: float | None = None) -> float:
+    """Return peak-to-trough drawdown as a negative fraction.
+
+    When a curve does not contain its starting cash (the normal case for a
+    bar-level curve), ``initial_equity`` is prepended so a loss on the first
+    bar is measured against the account opening balance.
+    """
+    if initial_equity is not None and (
+        not math.isfinite(float(initial_equity)) or float(initial_equity) <= 0
+    ):
+        raise ValueError("initial_equity must be a finite positive value")
+    if equity.empty and initial_equity is None:
         return 0.0
-    peak = equity.cummax()
-    drawdown = equity / peak - 1.0
+    values = pd.to_numeric(equity, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if initial_equity is not None:
+        values = pd.concat(
+            [pd.Series([float(initial_equity)], dtype=float), values.reset_index(drop=True)],
+            ignore_index=True,
+        )
+    if values.empty:
+        return 0.0
+    peak = values.cummax()
+    drawdown = values / peak - 1.0
     return float(drawdown.min())
 
 
@@ -23,15 +41,25 @@ def calculate_metrics(
 ) -> dict[str, float | int | str | None]:
     if equity_curve.empty:
         return {}
+    if not math.isfinite(float(initial_cash)) or initial_cash <= 0:
+        raise ValueError("initial_cash must be a finite positive value")
 
-    equity = equity_curve["Equity"].astype(float)
-    returns = equity.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+    ordered_curve = equity_curve.sort_values("DateTime").reset_index(drop=True)
+    equity = ordered_curve["Equity"].astype(float)
+    returns = pd.concat(
+        [pd.Series([float(initial_cash)]), equity.reset_index(drop=True)], ignore_index=True
+    ).pct_change().replace([np.inf, -np.inf], np.nan).dropna()
     total_return = equity.iloc[-1] / initial_cash - 1.0
 
-    start = pd.to_datetime(equity_curve["DateTime"].iloc[0])
-    end = pd.to_datetime(equity_curve["DateTime"].iloc[-1])
+    start = pd.to_datetime(ordered_curve["DateTime"].iloc[0])
+    end = pd.to_datetime(ordered_curve["DateTime"].iloc[-1])
     years = max((end - start).total_seconds() / (365.25 * 24 * 60 * 60), 1 / 365.25)
-    cagr = (equity.iloc[-1] / initial_cash) ** (1 / years) - 1.0
+    if equity.iloc[-1] > 0 and initial_cash > 0:
+        cagr_pct: float | None = float(
+            ((equity.iloc[-1] / initial_cash) ** (1 / years) - 1.0) * 100
+        )
+    else:
+        cagr_pct = None
 
     periods_per_year = len(returns) / years if years > 0 else 0.0
     sharpe = None
@@ -42,7 +70,9 @@ def calculate_metrics(
     if not downside.empty and downside.std(ddof=0) > 0 and periods_per_year > 0:
         sortino = float((returns.mean() / downside.std(ddof=0)) * math.sqrt(periods_per_year))
 
-    trade_count = int(len(trades))
+    trade_count = len(trades)
+    if trade_count and "NetPnL" not in trades.columns:
+        raise ValueError("trades must contain a NetPnL column")
     wins = trades[trades["NetPnL"] > 0] if trade_count else trades
     losses = trades[trades["NetPnL"] < 0] if trade_count else trades
     gross_profit = float(wins["NetPnL"].sum()) if trade_count else 0.0
@@ -51,14 +81,14 @@ def calculate_metrics(
     win_rate = len(wins) / trade_count if trade_count else None
     expectancy = float(trades["NetPnL"].mean()) if trade_count else None
 
-    exposure = float(equity_curve["InPosition"].mean()) if "InPosition" in equity_curve else 0.0
+    exposure = float(ordered_curve["InPosition"].mean()) if "InPosition" in ordered_curve else 0.0
 
     return {
         "initial_cash": float(initial_cash),
         "final_equity": float(equity.iloc[-1]),
         "total_return_pct": float(total_return * 100),
-        "cagr_pct": float(cagr * 100),
-        "max_drawdown_pct": float(max_drawdown(equity) * 100),
+        "cagr_pct": cagr_pct,
+        "max_drawdown_pct": float(max_drawdown(equity, initial_cash) * 100),
         "sharpe": sharpe,
         "sortino": sortino,
         "trade_count": trade_count,
@@ -77,10 +107,12 @@ def calculate_yearly_metrics(
     if equity_curve.empty:
         return pd.DataFrame()
 
-    equity = equity_curve.copy()
+    equity = equity_curve.copy().sort_values("DateTime").reset_index(drop=True)
     equity["DateTime"] = pd.to_datetime(equity["DateTime"])
     equity["Year"] = equity["DateTime"].dt.year
     trades = trades.copy()
+    if not math.isfinite(float(initial_cash)) or initial_cash <= 0:
+        raise ValueError("initial_cash must be a finite positive value")
     if not trades.empty:
         trades["ExitTime"] = pd.to_datetime(trades["ExitTime"])
         trades["Year"] = trades["ExitTime"].dt.year
@@ -105,8 +137,10 @@ def calculate_yearly_metrics(
                 "StartEquity": float(start_equity),
                 "EndEquity": end_equity,
                 "ReturnPct": float((end_equity / start_equity - 1.0) * 100),
-                "MaxDrawdownPct": float(max_drawdown(year_equity["Equity"].astype(float)) * 100),
-                "Trades": int(len(year_trades)),
+                "MaxDrawdownPct": float(
+                    max_drawdown(year_equity["Equity"].astype(float), start_equity) * 100
+                ),
+                "Trades": len(year_trades),
                 "WinRatePct": None if win_rate is None else float(win_rate * 100),
                 "ProfitFactor": profit_factor,
                 "NetPnL": float(year_trades["NetPnL"].sum()) if not year_trades.empty else 0.0,

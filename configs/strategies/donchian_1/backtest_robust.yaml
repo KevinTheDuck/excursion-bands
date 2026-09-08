@@ -1,0 +1,112 @@
+# Independent research profile: the existing default/HMM workflow is unchanged.
+data:
+  data_config: configs/data/local_nq_5m.yaml
+  sessions_config: configs/sessions/nq_default.yaml
+  volatility_config: configs/features/volatility/specification.yaml
+  bands_config: configs/features/bands/nq_default.yaml
+  variants: configs/strategies/donchian_1/variants
+backtest:
+  start_date: 2019-01-01 # Requested first OOS date; prior history is used for training.
+  end_date: null
+  initial_cash: 100000.0
+instrument:
+  symbol: NQ
+  point_value: 20.0
+  tick_size: 0.25
+  cfd_point_value: 1.0
+execution:
+  commission_per_contract_side: 4.5
+  slippage_ticks_per_side: 3.0
+  fill_on: next_open
+  same_bar_exit_priority: stop
+sizing:
+  mode: risk_current_equity
+  fixed_units: 1.0
+  risk_pct: 0.01
+  max_units: null
+risk:
+  stop_loss_points: null
+  take_profit_points: null
+benchmark:
+  enabled: false
+  strategy: buy_and_hold
+strategy:
+  name: donchian
+  force_exit_time: "16:00"
+  donchian:
+    lookback_bars: 20
+  atr:
+    lookback_sessions: 20
+    buffer_mult: 0.1
+  stop:
+    mode: atr
+  atr_stop:
+    enabled: true
+    length: 14
+    multiplier: 2.0
+  take_profit:
+    rr: 3.0
+  break_even:
+    enabled: false
+    trigger_rr: 3.0
+    offset_points: 0.0
+reports:
+  output_dir: data/output/backtests
+  save_charts: false
+  monte_carlo:
+    enabled: false
+  wfo_research:
+    enabled: false
+# HMM variants in the directory are excluded only from this robust profile.
+hmm:
+  enabled: false
+  warmup_start_date: 2011-01-01
+wfo:
+  enabled: true
+  protocol: robust
+  optimizer: optuna
+  n_trials: 64
+  seed: 42
+  checkpoint_dir: null # Prefer explicit --run-dir for easy resumption.
+  resume: false
+  max_run_seconds: 28800
+  mode: calendar
+  train_months: 6 # Legacy comparison only.
+  test_months: 3
+  step_months: 3
+  objective: profit_factor # Legacy comparison only.
+  reoptimization_mode: degradation
+  degradation_objective: total_return_pct
+  degradation_threshold: 0.0
+  max_parameter_combinations: 512
+  max_workers: 2
+  parameter_grid: # Legacy comparator; robust uses search_space below.
+    strategy.donchian.lookback_bars: [20, 40, 60, 80]
+    features.bands.lookback_window: [10, 20, 30, 40]
+    strategy.atr_stop.multiplier: [1.0, 2.0, 3.0]
+    strategy.take_profit.rr: [2.0, 3.0, 4.0]
+    strategy.break_even.enabled: [false, true]
+  robust:
+    search_months: 24
+    search_blocks: 4
+    calibration_months: 12
+    gate_months: 12
+    shortlist_size: 5
+    min_total_trades: 60
+    min_block_trades: 10
+    min_regime_sessions: 60
+    min_regime_trades: 20
+    shrinkage_sessions: 126
+    confirmation_sessions: 2
+    gate_min_trades: 30
+    bootstrap_simulations: 1000
+    bootstrap_block_sessions: 20
+    workers: 2
+    stress_cost_multiplier: 2.0
+    include_legacy: true
+    search_space:
+      strategy.donchian.lookback_bars: {type: int, low: 10, high: 160, step: 5}
+      features.bands.lookback_window: {type: int, low: 10, high: 120, step: 5}
+      strategy.atr_stop.multiplier: {type: float, low: 0.75, high: 4.0, step: 0.25}
+      strategy.take_profit.rr: {type: float, low: 1.0, high: 6.0, step: 0.25}
+      strategy.break_even.enabled: {type: categorical, choices: [false, true]}

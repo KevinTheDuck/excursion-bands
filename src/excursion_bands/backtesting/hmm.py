@@ -14,11 +14,11 @@ from excursion_bands.backtesting.costs import (
     commission_for_units,
     slippage_points,
 )
-from excursion_bands.backtesting.models import Signal
+from excursion_bands.backtesting.engine import _BarView, _exit_from_bar
+from excursion_bands.backtesting.models import Position, Signal
 from excursion_bands.backtesting.specification import BacktestConfig, VariantConfig
 from excursion_bands.backtesting.strategies.donchian import build_donchian_signal
 from excursion_bands.backtesting.strategies.orb import build_orb_signal
-
 
 FEATURE_COLUMNS = [
     "return_1",
@@ -58,7 +58,10 @@ def train_hmm_filter(
         return HMMFilterResult(set(), pd.DataFrame(), pd.DataFrame(), {"status": "disabled"})
 
     train_prepared = _add_hmm_features(train_prepared)
-    test_prepared = _add_hmm_features(test_prepared)
+    # Feature windows for the first test bars must retain the final training
+    # observations.  Recomputing pct-change/rolling features on test-only
+    # rows silently resets those windows and changes the HMM state sequence.
+    test_prepared = _add_hmm_features(test_prepared, history=train_prepared)
     train_dataset = build_candidate_dataset(train_prepared, config, variant)
     test_dataset = build_candidate_dataset(test_prepared, config, variant)
     fallback_allowed = _fallback_allowed(test_dataset, config.hmm.fallback)
@@ -66,34 +69,54 @@ def train_hmm_filter(
         return HMMFilterResult(
             fallback_allowed,
             train_dataset,
-            _fallback_predictions(test_dataset, "insufficient_samples"),
+            _fallback_predictions(test_dataset, "insufficient_samples", fallback_allowed),
             {"status": "insufficient_samples", "train_samples": len(train_dataset)},
         )
 
-    train_features = train_prepared.dropna(subset=FEATURE_COLUMNS).copy()
-    test_features = test_prepared.dropna(subset=FEATURE_COLUMNS).copy()
+    # HMM observations are strategy candidates, rather than every market bar.
+    # This is both the causal unit being filtered and several orders of
+    # magnitude smaller than a multi-year intraday frame.
+    train_features = train_dataset.dropna(subset=FEATURE_COLUMNS).copy()
+    test_features = test_dataset.dropna(subset=FEATURE_COLUMNS).copy()
     if len(train_features) < config.hmm.min_train_samples or test_features.empty:
         return HMMFilterResult(
             fallback_allowed,
             train_dataset,
-            _fallback_predictions(test_dataset, "insufficient_bar_samples"),
+            _fallback_predictions(test_dataset, "insufficient_bar_samples", fallback_allowed),
             {"status": "insufficient_bar_samples", "train_samples": len(train_features)},
         )
 
     x_train = _feature_matrix(train_features)
     x_test = _feature_matrix(test_features)
-    model = _fit_hmm(x_train, config.hmm.n_states, config.hmm.max_iter, config.hmm.random_state)
-    train_features["HMMState"] = _viterbi(model, x_train)
-    test_features["HMMState"] = _filter_states(model, x_test)
-
-    train_state_by_time = dict(zip(train_features["DateTime"], train_features["HMMState"]))
-    test_state_by_time = dict(zip(test_features["DateTime"], test_features["HMMState"]))
-    train_dataset = train_dataset.copy()
-    test_dataset = test_dataset.copy()
-    train_dataset["HMMState"] = train_dataset["SignalTime"].map(train_state_by_time)
-    test_dataset["HMMState"] = test_dataset["SignalTime"].map(test_state_by_time)
-    train_dataset = train_dataset.dropna(subset=["HMMState"])
-    test_dataset = test_dataset.dropna(subset=["HMMState"])
+    # Reserve the most recent candidate observations for chronological state
+    # validation.  The HMM parameters are fitted only on the earlier feature
+    # sequence so validation outcomes cannot influence the regime model.
+    state_train_dataset, preliminary_validation = _split_state_selection_data(
+        train_dataset, config
+    )
+    if preliminary_validation.empty:
+        fit_features = train_features
+    else:
+        validation_start = pd.to_datetime(preliminary_validation["SignalTime"].iloc[0])
+        fit_features = train_features[train_features["SignalTime"] < validation_start]
+        if len(fit_features) < config.hmm.min_train_samples:
+            return HMMFilterResult(
+                fallback_allowed, train_dataset,
+                _fallback_predictions(test_dataset, "insufficient_fit_samples", fallback_allowed),
+                {"status": "insufficient_fit_samples", "train_samples": len(fit_features)},
+            )
+    x_fit = _feature_matrix(fit_features)
+    model = _fit_hmm(x_fit, config.hmm.n_states, config.hmm.max_iter, config.hmm.random_state)
+    # Forward filtering is causal; Viterbi would use future observations when
+    # assigning a state to an earlier candidate.
+    train_dataset = train_features.copy()
+    test_dataset = test_features.copy()
+    train_dataset["HMMState"] = _filter_states(model, x_train)
+    # Continue the forward-filtering posterior from the final training
+    # candidate.  Resetting to ``start_prob`` at the fold boundary would make
+    # the first test state depend on an artificial new sequence.
+    test_states = _filter_states(model, np.vstack([x_train, x_test]))[-len(x_test) :]
+    test_dataset["HMMState"] = test_states
     train_dataset["HMMState"] = train_dataset["HMMState"].astype(int)
     test_dataset["HMMState"] = test_dataset["HMMState"].astype(int)
     state_train_dataset, state_validation_dataset = _split_state_selection_data(train_dataset, config)
@@ -108,8 +131,8 @@ def train_hmm_filter(
     allowed = set(pd.to_datetime(predictions.loc[predictions["Allowed"], "SignalTime"]))
     diagnostics = {
         "status": "trained",
-        "train_samples": int(len(train_dataset)),
-        "test_candidates": int(len(test_dataset)),
+        "train_samples": len(train_dataset),
+        "test_candidates": len(test_dataset),
         "allowed_trades": int(predictions["Allowed"].sum()),
         "rejected_trades": int((~predictions["Allowed"]).sum()),
         "tradable_states": ",".join(str(state) for state in sorted(tradable_states)),
@@ -142,7 +165,8 @@ def build_candidate_dataset(
     traded_sessions: set[object] = set()
     prepared = prepared.sort_values("DateTime").reset_index(drop=True).copy()
     prepared["DateTime"] = pd.to_datetime(prepared["DateTime"])
-    for index, bar in prepared.iterrows():
+    for index, row in enumerate(prepared.itertuples(index=False)):
+        bar = _BarView(row, index)
         if index + 1 >= len(prepared) or bar.Session in traded_sessions:
             continue
         signal = _build_strategy_signal(bar, config, variant)
@@ -164,9 +188,30 @@ def build_candidate_dataset(
     return pd.DataFrame(rows)
 
 
-def _add_hmm_features(prepared: pd.DataFrame) -> pd.DataFrame:
-    prepared = prepared.sort_values("DateTime").reset_index(drop=True).copy()
-    prepared["DateTime"] = pd.to_datetime(prepared["DateTime"])
+def _add_hmm_features(
+    prepared: pd.DataFrame, history: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    target = prepared.sort_values("DateTime").reset_index(drop=True).copy()
+    target["DateTime"] = pd.to_datetime(target["DateTime"])
+    if history is not None and not history.empty:
+        history = history.sort_values("DateTime").copy()
+        history["DateTime"] = pd.to_datetime(history["DateTime"])
+        base_columns = [
+            column
+            for column in (
+                "DateTime", "Session", "Open", "High", "Low", "Close", "Volume",
+                "ATR_Session", "VWAP", "ATR_Stop",
+            )
+            if column in target.columns and column in history.columns
+        ]
+        combined = pd.concat(
+            [history.reindex(columns=base_columns), target.reindex(columns=base_columns)],
+            ignore_index=True,
+        ).drop_duplicates("DateTime", keep="last").sort_values("DateTime").reset_index(drop=True)
+    else:
+        combined = target
+
+    prepared = combined.copy()
     closes = prepared["Close"].astype(float)
     returns = closes.pct_change()
     high = prepared["High"].astype(float)
@@ -185,7 +230,13 @@ def _add_hmm_features(prepared: pd.DataFrame) -> pd.DataFrame:
     prepared["body_to_range"] = ((close - open_).abs() / bar_range).fillna(0.0)
     prepared["close_vs_vwap_atr"] = ((close - vwap) / atr_session).replace([np.inf, -np.inf], np.nan).fillna(0.0)
     prepared["atr_stop_atr_session"] = (atr_stop / atr_session).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    return prepared
+    features = prepared[["DateTime", *FEATURE_COLUMNS]]
+    return target.drop(columns=FEATURE_COLUMNS, errors="ignore").merge(
+        features[features["DateTime"].isin(set(target["DateTime"]))],
+        on="DateTime",
+        how="left",
+        validate="one_to_one",
+    )
 
 
 def _build_strategy_signal(
@@ -201,6 +252,13 @@ def _build_strategy_signal(
 
 
 def _candidate_features(prepared: pd.DataFrame, index: int, bar: pd.Series) -> dict[str, float]:
+    if all(column in bar.index for column in FEATURE_COLUMNS):
+        values = {
+            column: _safe_float(bar[column])
+            for column in FEATURE_COLUMNS
+        }
+        if all(np.isfinite(value) for value in values.values()):
+            return values
     close = float(bar.Close)
     open_ = float(bar.Open)
     high = float(bar.High)
@@ -233,7 +291,7 @@ def _feature_matrix(data: pd.DataFrame) -> np.ndarray:
 
 def _fit_hmm(x: np.ndarray, n_states: int, max_iter: int, random_state: int) -> GaussianHMM:
     rng = np.random.default_rng(random_state)
-    n_obs, n_features = x.shape
+    n_obs, _n_features = x.shape
     quantiles = np.linspace(0, 1, n_states + 2)[1:-1]
     order_feature = x[:, 0]
     means = []
@@ -249,7 +307,7 @@ def _fit_hmm(x: np.ndarray, n_states: int, max_iter: int, random_state: int) -> 
 
     for _ in range(max_iter):
         log_emit = _log_emissions(x, means, variances)
-        gamma, xi_sum, log_likelihood = _forward_backward(log_emit, start_prob, trans_prob)
+        gamma, xi_sum, _log_likelihood = _forward_backward(log_emit, start_prob, trans_prob)
         weights = gamma.sum(axis=0) + 1e-12
         means = (gamma.T @ x) / weights[:, None]
         for state in range(n_states):
@@ -334,7 +392,7 @@ def _split_state_selection_data(
     if validation_fraction <= 0.0:
         return dataset, pd.DataFrame(columns=dataset.columns)
     data = dataset.sort_values("SignalTime").reset_index(drop=True)
-    validation_size = max(config.hmm.min_validation_trades, int(round(len(data) * validation_fraction)))
+    validation_size = max(config.hmm.min_validation_trades, round(len(data) * validation_fraction))
     if validation_size >= len(data):
         return data, pd.DataFrame(columns=data.columns)
     split = len(data) - validation_size
@@ -437,7 +495,11 @@ def _simulate_candidate(
 ) -> dict[str, float | str] | None:
     entry_index = signal_index + 1
     entry_bar = prepared.iloc[entry_index]
+    if signal.force_exit_time is not None and entry_bar.DateTime >= signal.force_exit_time:
+        return None
     session = entry_bar.Session
+    if signal.session is not None and session != signal.session:
+        return None
     slip = slippage_points(config.execution, config.instrument)
     entry_price = apply_entry_slippage(signal.side, float(entry_bar.Open), slip)
     if signal.stop_loss is None:
@@ -446,30 +508,35 @@ def _simulate_candidate(
     if risk_points <= 0:
         return None
     stop_loss = signal.stop_loss
+    position = Position(
+        side=signal.side,
+        units=1.0,
+        entry_time=entry_bar.DateTime,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        take_profit=signal.take_profit,
+        force_exit_time=signal.force_exit_time,
+        entry_commission=commission_for_units(1.0, config.execution, config.instrument),
+        break_even_trigger=signal.break_even_trigger,
+        break_even_stop=signal.break_even_stop,
+        initial_stop_loss=stop_loss,
+    )
     exit_price = None
     exit_reason = "final_bar"
-    session_bars = prepared.iloc[entry_index:]
+    end_index = len(prepared)
+    if signal.force_exit_time is not None:
+        end_index = min(
+            len(prepared),
+            int(prepared["DateTime"].searchsorted(signal.force_exit_time, side="left")) + 1,
+        )
+    session_bars = prepared.iloc[entry_index:end_index]
     session_bars = session_bars[session_bars["Session"] == session]
     for _, bar in session_bars.iterrows():
-        if signal.force_exit_time is not None and bar.DateTime >= signal.force_exit_time:
-            exit_price = float(bar.Close)
-            exit_reason = "force_exit"
-            break
-        high = float(bar.High)
-        low = float(bar.Low)
-        if signal.side == "long":
-            stop_hit = stop_loss is not None and low <= stop_loss
-            tp_hit = signal.take_profit is not None and high >= signal.take_profit
-        else:
-            stop_hit = stop_loss is not None and high >= stop_loss
-            tp_hit = signal.take_profit is not None and low <= signal.take_profit
-        if stop_hit:
-            exit_price = stop_loss
-            exit_reason = "stop_loss"
-            break
-        if tp_hit:
-            exit_price = signal.take_profit
-            exit_reason = "take_profit"
+        exit_candidate = _exit_from_bar(
+            position, bar, config.execution.same_bar_exit_priority
+        )
+        if exit_candidate is not None:
+            exit_price, exit_reason = exit_candidate
             break
     if exit_price is None:
         exit_price = float(session_bars.iloc[-1].Close) if not session_bars.empty else float(entry_bar.Close)
@@ -478,11 +545,12 @@ def _simulate_candidate(
     gross_pnl = (fill_exit - entry_price) * direction * config.instrument.cfd_point_value
     commission = commission_for_units(1.0, config.execution, config.instrument) * 2
     net_pnl = gross_pnl - commission
+    risk_amount = risk_points * config.instrument.cfd_point_value
     return {
         "entry_price": float(entry_price),
         "exit_price": float(fill_exit),
-        "gross_r": float(gross_pnl / risk_points),
-        "net_r": float(net_pnl / risk_points),
+        "gross_r": float(gross_pnl / risk_amount) if risk_amount > 0 else 0.0,
+        "net_r": float(net_pnl / risk_amount) if risk_amount > 0 else 0.0,
         "exit_reason": exit_reason,
     }
 
@@ -495,12 +563,15 @@ def _fallback_allowed(dataset: pd.DataFrame, fallback: str) -> set[pd.Timestamp]
     raise ValueError("hmm.fallback must be allow_all or reject_all")
 
 
-def _fallback_predictions(dataset: pd.DataFrame, reason: str) -> pd.DataFrame:
+def _fallback_predictions(
+    dataset: pd.DataFrame, reason: str, allowed_signal_times: set[pd.Timestamp] | None = None
+) -> pd.DataFrame:
     if dataset.empty:
         return pd.DataFrame()
     predictions = dataset[["SignalTime", "Session", "Side", "net_r"]].copy()
     predictions["HMMState"] = -1
-    predictions["Allowed"] = False
+    allowed = set(allowed_signal_times or set())
+    predictions["Allowed"] = pd.to_datetime(predictions["SignalTime"]).isin(allowed)
     predictions["Reason"] = reason
     return predictions
 

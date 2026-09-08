@@ -98,6 +98,9 @@ hmm:
 
 wfo:
   enabled: true
+  optimizer: optuna # optuna | grid
+  n_trials: 64
+  seed: 42
   mode: calendar
   train_months: 6
   test_months: 3

@@ -5,13 +5,12 @@ Donchian channel breakout strategy variants.
 from dataclasses import replace
 from datetime import time
 
-import numpy as np
 import pandas as pd
 
 from excursion_bands.backtesting.engine import run_backtest
 from excursion_bands.backtesting.models import BacktestResult, Position, Signal
 from excursion_bands.backtesting.specification import BacktestConfig, VariantConfig
-from excursion_bands.backtesting.strategies.orb import _force_exit_timestamp, _rma
+from excursion_bands.backtesting.strategies.orb import _force_exit_times, _rma
 
 
 def _parse_time(value: str) -> time:
@@ -30,13 +29,11 @@ def prepare_donchian_bars(
     df["BarTime"] = df["DateTime"].dt.time
     if "Session" not in df.columns:
         df["Session"] = df["DateTime"].dt.date
+    else:
+        df["Session"] = pd.to_datetime(df["Session"]).dt.date
 
     force_exit = _parse_time(strategy.force_exit_time)
-    session_to_force_exit = {
-        session: _force_exit_timestamp(session, force_exit, df)
-        for session in df["Session"].dropna().unique()
-    }
-    df["ForceExitTime"] = df["Session"].map(session_to_force_exit)
+    df["ForceExitTime"] = _force_exit_times(df, force_exit)
 
     lookback = strategy.donchian.lookback_bars
     df["Donchian_High"] = df["High"].rolling(lookback, min_periods=lookback).max().shift(1)
@@ -80,7 +77,9 @@ def prepare_donchian_bars(
         missing = set(band_cols) - set(bands.columns)
         if missing:
             raise ValueError(f"Bands data missing required columns: {sorted(missing)}")
-        df = df.merge(bands[band_cols].copy(), on="Session", how="left")
+        band_data = bands[band_cols].copy()
+        band_data["Session"] = pd.to_datetime(band_data["Session"]).dt.date
+        df = df.merge(band_data, on="Session", how="left")
     df = df.drop(columns=["_PV"])
 
     df["EntryAllowed"] = (
@@ -100,6 +99,8 @@ def build_donchian_signal(
 ) -> Signal | None:
     strategy = config.strategy
     if strategy is None or not bool(bar.EntryAllowed):
+        return None
+    if pd.isna(bar.ForceExitTime) or pd.Timestamp(bar.DateTime) >= pd.Timestamp(bar.ForceExitTime):
         return None
 
     if variant.use_atr_buffer and pd.isna(bar.ATR_Session):
@@ -182,6 +183,7 @@ def build_donchian_signal(
         force_exit_time=pd.to_datetime(bar.ForceExitTime).to_pydatetime(),
         break_even_trigger=None if break_even_trigger is None else float(break_even_trigger),
         break_even_stop=None if break_even_stop is None else float(break_even_stop),
+        session=bar.Session,
     )
 
 
@@ -190,6 +192,9 @@ def run_donchian_variant(
     config: BacktestConfig,
     variant: VariantConfig,
     allowed_signal_times: set[pd.Timestamp] | None = None,
+    *,
+    starting_cash: float | None = None,
+    session_filter: set[object] | None = None,
 ) -> BacktestResult:
     traded_sessions: set[object] = set()
 
@@ -211,7 +216,15 @@ def run_donchian_variant(
             traded_sessions.add(session)
         return signal
 
-    return run_backtest(variant.label, bars, config, signal_func)
+    return run_backtest(
+        variant.label,
+        bars,
+        config,
+        signal_func,
+        starting_cash=starting_cash,
+        session_filter=session_filter,
+        fast_rows=True,
+    )
 
 
 def default_donchian_variants() -> tuple[VariantConfig, ...]:

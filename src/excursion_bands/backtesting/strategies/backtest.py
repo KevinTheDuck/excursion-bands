@@ -74,16 +74,20 @@ def start_backtest(config_path: str) -> None:
             allowed_signal_times = None
             hmm_result = None
             prepared_variant = prepared.copy()
-            if variant.use_hmm_filter:
+            if variant.use_hmm_filter and config.hmm is not None and config.hmm.enabled:
                 if config.hmm is None:
                     raise ValueError("HMM variant requires hmm config")
                 start = config.backtest.start_date
-                train_prepared = prepared_variant[
-                    prepared_variant["DateTime"].dt.date < start
-                ]
-                test_prepared = prepared_variant[
-                    prepared_variant["DateTime"].dt.date >= start
-                ]
+                if "Session" in prepared_variant:
+                    train_prepared = prepared_variant[prepared_variant["Session"] < start]
+                    test_prepared = prepared_variant[prepared_variant["Session"] >= start]
+                else:
+                    train_prepared = prepared_variant[
+                        prepared_variant["DateTime"].dt.date < start
+                    ]
+                    test_prepared = prepared_variant[
+                        prepared_variant["DateTime"].dt.date >= start
+                    ]
                 hmm_result = train_hmm_filter(train_prepared, test_prepared, config, variant)
                 allowed_signal_times = hmm_result.allowed_signal_times
             result = runner(prepared_variant, config, variant, allowed_signal_times)

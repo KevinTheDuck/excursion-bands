@@ -15,7 +15,9 @@ dependencies = [
     "pandas>=3.0.2",
     "pandas-ta>=0.4.71b0",
     "polars>=1.40.1",
+    "pyarrow>=18.0.0",
     "pyyaml>=6.0.3",
+    "optuna>=4.0.0",
 ]
 
 [build-system]
